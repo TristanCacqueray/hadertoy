@@ -15,6 +15,8 @@ tested-with:         GHC == 8.8.3
 
 common common-options
   build-depends:       base
+                     , GLFW-b
+                     , OpenGL
 
   ghc-options:         -Wall
                        -Wcompat
