@@ -113,16 +113,14 @@ setupShader shader =
   where
     positions :: V.Vector Float
     positions =
-      V.fromList
-        [ -1.0,
-          -1.0,
-          -1.0,
-          1.0,
-          1.0,
-          -1.0,
-          1.0,
-          1.0
-        ]
+      V.fromList $
+        concatMap
+          (\(a, b) -> [a, b])
+          [ (-1.0, -1.0),
+            (-1.0, 1.0),
+            (1.0, -1.0),
+            (1.0, 1.0)
+          ]
     vertSrc =
       unlines
         [ "attribute vec2 position;",
