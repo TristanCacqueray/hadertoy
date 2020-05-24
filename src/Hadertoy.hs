@@ -1,4 +1,6 @@
+{-# LANGUAGE DerivingStrategies #-}
 {-# LANGUAGE NumericUnderscores #-}
+{-# LANGUAGE OverloadedStrings #-}
 
 -- |
 -- Copyright: (c) 2020 Tristan de Cacqueray
@@ -23,6 +25,8 @@ module Hadertoy
     withGLFW,
     Window,
     withWindow,
+    getParam,
+    writeParam,
     render,
     run,
   )
@@ -32,6 +36,9 @@ import Control.Concurrent (threadDelay)
 import Control.Exception (bracket)
 import Control.Monad (unless, when)
 import qualified Data.ByteString as BS
+import qualified Data.Map.Strict as M
+import Data.Maybe (fromMaybe)
+import qualified Data.Text as T
 import qualified Data.Vector.Storable as V
 import GHC.Float (double2Float)
 import qualified Graphics.GL.Core31 as GLR
@@ -53,13 +60,39 @@ withGLFW f =
         then f Init
         else ioError (userError "GLFW init failed")
 
+data Param = Param GL.GLint GL.VariableType
+  deriving stock (Show)
+
+type Params = M.Map T.Text Param
+
+data ParamValue
+  = ParamFloat Float
+  | ParamFloat3 Float Float Float
+
+data DefaultParams = DefaultParams
+  { _iRes :: Param,
+    _iTime :: Param
+  }
+
 data Window = Window
   { _glWindow :: GLFW.Window,
-    _glProgram :: GL.Program
+    _glProgram :: GL.Program,
+    _defParams :: DefaultParams,
+    getParams :: Params
   }
 
 instance Show Window where
   show _ = "Window[]"
+
+getParam :: Window -> T.Text -> Maybe Param
+getParam w n = M.lookup n (getParams w)
+
+writeParam :: Param -> ParamValue -> IO ()
+writeParam (Param pid GL.Float') (ParamFloat val) = GLR.glUniform1f pid val
+writeParam (Param pid GL.FloatVec3) (ParamFloat3 v1 v2 v3) = GLR.glUniform3f pid v1 v2 v3
+writeParam (Param pid GL.Float') _ = error $ "Invalid param value: " <> show pid
+writeParam (Param pid GL.FloatVec3) _ = error $ "Invalid param value: " <> show pid
+writeParam (Param _ v) _ = error $ "Unknown param type: " <> show v
 
 loadShader :: GL.ShaderType -> FilePath -> IO GL.Shader
 loadShader st filePath = BS.readFile filePath >>= loadShaderBS st
@@ -143,10 +176,24 @@ withWindow _ width height shader f =
     runCallback (Just win) = do
       GLFW.makeContextCurrent (Just win)
       prog <- setupShader shader
-      f $ Window win prog
+      params <- getUniforms prog
+      let iRes = fromMaybe (error "Shader missing iResolution") (M.lookup "iResolution" params)
+      let iTime = fromMaybe (error "Shader missing iTime") (M.lookup "iTime" params)
+      f $ Window win prog (DefaultParams iRes iTime) params
     runCallback Nothing = ioError (userError "Window creation failed")
     simpleErrorCallback :: GLFW.Error -> String -> IO ()
     simpleErrorCallback e s = putStrLn $ unwords [show e, show s]
+    getUniforms :: GL.Program -> IO Params
+    getUniforms prog = do
+      uniforms <- GL.activeUniforms prog
+      params <-
+        mapM
+          ( \(_, t, n) -> do
+              GL.UniformLocation x <- GL.uniformLocation prog n
+              return (T.pack n, Param x t)
+          )
+          uniforms
+      return $ M.fromList params
 
 contextCurrent :: Window -> IO ()
 contextCurrent win = GLFW.makeContextCurrent $ Just (_glWindow win)
@@ -155,19 +202,17 @@ render :: Window -> IO Bool
 render win =
   do
     contextCurrent win
-    let prog = _glProgram win
     let win' = _glWindow win
+    let (DefaultParams iRes iTime) = _defParams win
     GL.clearColor $= GL.Color4 0.9 0.1 0.1 1
     GL.clear [GL.ColorBuffer]
     -- update resolution
     (width, height) <- GLFW.getFramebufferSize win'
     GL.viewport $= (GL.Position 0 0, GL.Size (fromIntegral width) (fromIntegral height))
-    GL.UniformLocation resLoc <- GL.get $ GL.uniformLocation prog "iResolution"
-    GLR.glUniform3f resLoc (fromIntegral width) (fromIntegral height) 0
+    writeParam iRes (ParamFloat3 (fromIntegral width) (fromIntegral height) 0)
     -- update time
     t <- getTime
-    GL.UniformLocation timeLoc <- GL.get $ GL.uniformLocation prog "iTime"
-    GLR.glUniform1f timeLoc $ double2Float t
+    writeParam iTime (ParamFloat $ double2Float t)
     -- draw call
     GL.drawArrays GL.TriangleStrip 0 4
     GLFW.swapBuffers win'
@@ -180,7 +225,7 @@ getTime =
     t <- GLFW.getTime
     case t of
       Just tv -> return tv
-      Nothing -> print "Error getting time?" >> return 0
+      Nothing -> print ("Error getting time?" :: T.Text) >> return 0
 
 -- | An example main loop
 run :: Int -> IO Bool -> IO ()

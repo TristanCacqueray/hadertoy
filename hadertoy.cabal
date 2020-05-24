@@ -16,6 +16,8 @@ tested-with:         GHC == 8.8.3
 common common-options
   build-depends:       base
                      , bytestring
+                     , containers
+                     , text
                      , vector
                      , GLFW-b
                      , OpenGL
