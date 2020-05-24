@@ -6,6 +6,19 @@
 -- Maintainer: Tristan de Cacqueray <tristanC@wombatt.eu>
 --
 -- Glumpy in Haskell
+--
+-- The goal of this library is to provide an abstraction similar to Glumpy,
+-- for example:
+-- https://github.com/glumpy/glumpy/blob/master/examples/shadertoy-template.py
+--
+-- Until this is complete, a more simple interface is provided to load and update
+-- shader code similar to shadertoy.
+--
+-- The current implementation is mostly adapted from these sources:
+-- https://github.com/ocharles/blog/blob/master/code/2013-12-02-linear-example.hs
+-- https://github.com/acowley/GLUtil/blob/master/examples/example1.hs
+-- https://github.com/bergey/haskell-OpenGL-examples/blob/master/glfw/Modern.hs
+
 module Hadertoy
   ( Window,
     window,
@@ -16,18 +29,94 @@ where
 
 import Control.Concurrent (threadDelay)
 import Control.Monad (unless, when)
+import qualified Data.ByteString as BS
+import qualified Data.Vector.Storable as V
+import GHC.Float (double2Float)
+import qualified Graphics.GL.Core31 as GLR
+import Graphics.Rendering.OpenGL (($=))
 import qualified Graphics.Rendering.OpenGL as GL
 import qualified Graphics.UI.GLFW as GLFW
 
 data Window = Window
-  { _glWindow :: GLFW.Window
+  { _glWindow :: GLFW.Window,
+    _glProgram :: GL.Program
   }
 
 instance Show Window where
   show _ = "Window[]"
 
-window :: Int -> Int -> IO (Maybe Window)
-window width height =
+loadShader :: GL.ShaderType -> FilePath -> IO GL.Shader
+loadShader st filePath = BS.readFile filePath >>= loadShaderBS st
+
+loadShaderBS :: GL.ShaderType -> BS.ByteString -> IO GL.Shader
+loadShaderBS st src =
+  do
+    shader <- GL.createShader st
+    GL.shaderSourceBS shader $= src
+    GL.compileShader shader
+    ok <- GL.get (GL.compileStatus shader)
+    unless ok $ do
+      infoLog <- GL.get (GL.shaderInfoLog shader)
+      putStrLn "Compilation failed:"
+      putStrLn infoLog
+      ioError (userError "shader compilation failed")
+    return shader
+
+linkShaderProgram :: GL.Program -> GL.Shader -> GL.Shader -> IO ()
+linkShaderProgram prog vs fs =
+  do
+    GL.attachedShaders prog $= [vs, fs]
+    GL.linkProgram prog
+    ok <- GL.get (GL.linkStatus prog)
+    infoLog <- GL.get (GL.programInfoLog prog)
+    unless (null infoLog) $ do
+      putStrLn "Link log:"
+      putStrLn infoLog
+    unless ok $ do
+      GL.deleteObjectNames [prog]
+      ioError (userError "GLSL linking failed")
+
+setupShader :: FilePath -> IO GL.Program
+setupShader shader =
+  do
+    prog <- GL.createProgram
+    -- compile
+    vert <- loadShaderBS GL.VertexShader (GL.packUtf8 vertSrc)
+    frag <- loadShader GL.FragmentShader shader
+    -- attrs
+    GL.attribLocation prog "position" $= GL.AttribLocation 0
+    -- link
+    linkShaderProgram prog vert frag
+    GL.currentProgram $= Just prog
+    -- set positions
+    GL.vertexAttribArray (GL.AttribLocation 0) $= GL.Enabled
+    V.unsafeWith positions $ \ptr ->
+      GL.vertexAttribPointer (GL.AttribLocation 0)
+        $= (GL.ToFloat, GL.VertexArrayDescriptor 2 GL.Float 0 ptr)
+    return prog
+  where
+    positions :: V.Vector Float
+    positions =
+      V.fromList
+        [ -1.0,
+          -1.0,
+          -1.0,
+          1.0,
+          1.0,
+          -1.0,
+          1.0,
+          1.0
+        ]
+    vertSrc =
+      unlines
+        [ "attribute vec2 position;",
+          "void main (void) {",
+          "gl_Position = vec4(position, 0.0, 1.0);",
+          "};"
+        ]
+
+window :: Int -> Int -> FilePath -> IO (Maybe Window)
+window width height shader =
   do
     GLFW.setErrorCallback $ Just simpleErrorCallback
     r <- GLFW.init -- TODO: how to manage this globally?
@@ -35,8 +124,9 @@ window width height =
     m <- GLFW.createWindow width height "Hadertoy" Nothing Nothing
     case m of
       (Just win') -> do
-        let win = Window win'
-        contextCurrent win
+        GLFW.makeContextCurrent m
+        prog <- setupShader shader
+        let win = Window win' prog
         return $ Just win
       Nothing -> return Nothing
   where
@@ -47,18 +137,35 @@ contextCurrent :: Window -> IO ()
 contextCurrent win = GLFW.makeContextCurrent $ Just (_glWindow win)
 
 render :: Window -> IO Bool
-render win = do
-  contextCurrent win
-  GLFW.swapBuffers (_glWindow win)
-  GL.flush
-  GLFW.windowShouldClose (_glWindow win)
+render win =
+  do
+    contextCurrent win
+    let prog = _glProgram win
+    let win' = _glWindow win
+    GL.clearColor $= GL.Color4 0.9 0.1 0.1 1
+    GL.clear [GL.ColorBuffer]
+    -- update resolution
+    (width, height) <- GLFW.getFramebufferSize win'
+    GL.viewport $= (GL.Position 0 0, GL.Size (fromIntegral width) (fromIntegral height))
+    GL.UniformLocation resLoc <- GL.get $ GL.uniformLocation prog "iResolution"
+    GLR.glUniform3f resLoc (fromIntegral width) (fromIntegral height) 0
+    -- update time
+    t <- getTime
+    GL.UniformLocation timeLoc <- GL.get $ GL.uniformLocation prog "iTime"
+    GLR.glUniform1f timeLoc $ double2Float t
+    -- draw call
+    GL.drawArrays GL.TriangleStrip 0 4
+    GLFW.swapBuffers win'
+    GL.flush
+    GLFW.windowShouldClose (_glWindow win)
 
 getTime :: IO Double
-getTime = do
-  t <- GLFW.getTime
-  case t of
-    Just tv -> return tv
-    Nothing -> print "Error getting time?" >> return 0
+getTime =
+  do
+    t <- GLFW.getTime
+    case t of
+      Just tv -> return tv
+      Nothing -> print "Error getting time?" >> return 0
 
 -- | An example main loop
 run :: Int -> IO Bool -> IO ()

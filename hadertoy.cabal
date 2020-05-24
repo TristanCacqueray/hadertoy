@@ -15,8 +15,11 @@ tested-with:         GHC == 8.8.3
 
 common common-options
   build-depends:       base
+                     , bytestring
+                     , vector
                      , GLFW-b
                      , OpenGL
+                     , OpenGLRaw
 
   ghc-options:         -Wall
                        -Wcompat
