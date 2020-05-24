@@ -37,7 +37,6 @@ import Control.Exception (bracket)
 import Control.Monad (unless, when)
 import qualified Data.ByteString as BS
 import qualified Data.Map.Strict as M
-import Data.Maybe (fromMaybe)
 import qualified Data.Text as T
 import qualified Data.Vector.Storable as V
 import GHC.Float (double2Float)
@@ -46,10 +45,10 @@ import Graphics.Rendering.OpenGL (($=))
 import qualified Graphics.Rendering.OpenGL as GL
 import qualified Graphics.UI.GLFW as GLFW
 
-data Initialized = Init
+newtype Initialized = Init T.Text
 
-withGLFW :: (Initialized -> IO ()) -> IO ()
-withGLFW f =
+withGLFW :: T.Text -> (Initialized -> IO ()) -> IO ()
+withGLFW v f =
   bracket
     GLFW.init
     (const GLFW.terminate)
@@ -57,7 +56,7 @@ withGLFW f =
   where
     runCallback initialized =
       if initialized
-        then f Init
+        then f $ Init v
         else ioError (userError "GLFW init failed")
 
 data Param = Param GL.GLint GL.VariableType
@@ -70,8 +69,8 @@ data ParamValue
   | ParamFloat3 Float Float Float
 
 data DefaultParams = DefaultParams
-  { _iRes :: Param,
-    _iTime :: Param
+  { _iRes :: Maybe Param,
+    _iTime :: Maybe Param
   }
 
 data Window = Window
@@ -90,6 +89,7 @@ getParam w n = M.lookup n (getParams w)
 writeParam :: Param -> ParamValue -> IO ()
 writeParam (Param pid GL.Float') (ParamFloat val) = GLR.glUniform1f pid val
 writeParam (Param pid GL.FloatVec3) (ParamFloat3 v1 v2 v3) = GLR.glUniform3f pid v1 v2 v3
+writeParam (Param pid GL.FloatVec2) (ParamFloat3 v1 v2 _) = GLR.glUniform2f pid v1 v2
 writeParam (Param pid GL.Float') _ = error $ "Invalid param value: " <> show pid
 writeParam (Param pid GL.FloatVec3) _ = error $ "Invalid param value: " <> show pid
 writeParam (Param _ v) _ = error $ "Unknown param type: " <> show v
@@ -106,7 +106,7 @@ loadShaderBS st src =
     ok <- GL.get (GL.compileStatus shader)
     unless ok $ do
       infoLog <- GL.get (GL.shaderInfoLog shader)
-      putStrLn "Compilation failed:"
+      putStrLn $ "Compilation failed:" <> show st
       putStrLn infoLog
       ioError (userError "shader compilation failed")
     return shader
@@ -125,8 +125,8 @@ linkShaderProgram prog vs fs =
       GL.deleteObjectNames [prog]
       ioError (userError "GLSL linking failed")
 
-setupShader :: FilePath -> IO GL.Program
-setupShader shader =
+setupShader :: T.Text -> FilePath -> IO GL.Program
+setupShader version shader =
   do
     prog <- GL.createProgram
     -- compile
@@ -156,14 +156,15 @@ setupShader shader =
           ]
     vertSrc =
       unlines
-        [ "attribute vec2 position;",
+        [ "#version " <> T.unpack version,
+          "in vec2 position;",
           "void main (void) {",
           "gl_Position = vec4(position, 0.0, 1.0);",
           "};"
         ]
 
 withWindow :: Initialized -> Int -> Int -> FilePath -> (Window -> IO ()) -> IO ()
-withWindow _ width height shader f =
+withWindow (Init version) width height shader f =
   do
     GLFW.setErrorCallback $ Just simpleErrorCallback
     bracket mkWindow closeWindow runCallback
@@ -175,11 +176,9 @@ withWindow _ width height shader f =
     runCallback :: Maybe GLFW.Window -> IO ()
     runCallback (Just win) = do
       GLFW.makeContextCurrent (Just win)
-      prog <- setupShader shader
+      prog <- setupShader version shader
       params <- getUniforms prog
-      let iRes = fromMaybe (error "Shader missing iResolution") (M.lookup "iResolution" params)
-      let iTime = fromMaybe (error "Shader missing iTime") (M.lookup "iTime" params)
-      f $ Window win prog (DefaultParams iRes iTime) params
+      f $ Window win prog (DefaultParams (M.lookup "iResolution" params) (M.lookup "iTime" params)) params
     runCallback Nothing = ioError (userError "Window creation failed")
     simpleErrorCallback :: GLFW.Error -> String -> IO ()
     simpleErrorCallback e s = putStrLn $ unwords [show e, show s]
@@ -209,10 +208,15 @@ render win =
     -- update resolution
     (width, height) <- GLFW.getFramebufferSize win'
     GL.viewport $= (GL.Position 0 0, GL.Size (fromIntegral width) (fromIntegral height))
-    writeParam iRes (ParamFloat3 (fromIntegral width) (fromIntegral height) 0)
+    case iRes of
+      Just v -> writeParam v (ParamFloat3 (fromIntegral width) (fromIntegral height) 0)
+      _ -> return ()
     -- update time
-    t <- getTime
-    writeParam iTime (ParamFloat $ double2Float t)
+    case iTime of
+      Just v -> do
+        t <- getTime
+        writeParam v (ParamFloat $ double2Float t)
+      _ -> return ()
     -- draw call
     GL.drawArrays GL.TriangleStrip 0 4
     GLFW.swapBuffers win'

@@ -10,7 +10,7 @@ main =
   do
     args <- getArgs
     let fn = fromMaybe "./shaders/demo.glsl" (listToMaybe args)
-    withGLFW $ \glfw ->
+    withGLFW "450" $ \glfw ->
       withWindow glfw 800 800 fn $ \win ->
         run fps (update win)
   where
