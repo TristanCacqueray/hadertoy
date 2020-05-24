@@ -18,16 +18,18 @@
 -- https://github.com/ocharles/blog/blob/master/code/2013-12-02-linear-example.hs
 -- https://github.com/acowley/GLUtil/blob/master/examples/example1.hs
 -- https://github.com/bergey/haskell-OpenGL-examples/blob/master/glfw/Modern.hs
-
 module Hadertoy
-  ( Window,
-    window,
+  ( Initialized,
+    withGLFW,
+    Window,
+    withWindow,
     render,
     run,
   )
 where
 
 import Control.Concurrent (threadDelay)
+import Control.Exception (bracket)
 import Control.Monad (unless, when)
 import qualified Data.ByteString as BS
 import qualified Data.Vector.Storable as V
@@ -36,6 +38,20 @@ import qualified Graphics.GL.Core31 as GLR
 import Graphics.Rendering.OpenGL (($=))
 import qualified Graphics.Rendering.OpenGL as GL
 import qualified Graphics.UI.GLFW as GLFW
+
+data Initialized = Init
+
+withGLFW :: (Initialized -> IO ()) -> IO ()
+withGLFW f =
+  bracket
+    GLFW.init
+    (const GLFW.terminate)
+    runCallback
+  where
+    runCallback initialized =
+      if initialized
+        then f Init
+        else ioError (userError "GLFW init failed")
 
 data Window = Window
   { _glWindow :: GLFW.Window,
@@ -115,23 +131,24 @@ setupShader shader =
           "};"
         ]
 
-window :: Int -> Int -> FilePath -> IO (Maybe Window)
-window width height shader =
+withWindow :: Initialized -> Int -> Int -> FilePath -> (Window -> IO ()) -> IO ()
+withWindow _ width height shader f =
   do
     GLFW.setErrorCallback $ Just simpleErrorCallback
-    r <- GLFW.init -- TODO: how to manage this globally?
-    unless r (error "GLFW.init failed")
-    m <- GLFW.createWindow width height "Hadertoy" Nothing Nothing
-    case m of
-      (Just win') -> do
-        GLFW.makeContextCurrent m
-        prog <- setupShader shader
-        let win = Window win' prog
-        return $ Just win
-      Nothing -> return Nothing
+    bracket mkWindow closeWindow runCallback
   where
-    simpleErrorCallback e s =
-      putStrLn $ unwords [show e, show s]
+    mkWindow :: IO (Maybe GLFW.Window)
+    mkWindow = GLFW.createWindow width height "Hadertoy" Nothing Nothing
+    closeWindow :: Maybe GLFW.Window -> IO ()
+    closeWindow _ = return ()
+    runCallback :: Maybe GLFW.Window -> IO ()
+    runCallback (Just win) = do
+      GLFW.makeContextCurrent (Just win)
+      prog <- setupShader shader
+      f $ Window win prog
+    runCallback Nothing = ioError (userError "Window creation failed")
+    simpleErrorCallback :: GLFW.Error -> String -> IO ()
+    simpleErrorCallback e s = putStrLn $ unwords [show e, show s]
 
 contextCurrent :: Window -> IO ()
 contextCurrent win = GLFW.makeContextCurrent $ Just (_glWindow win)

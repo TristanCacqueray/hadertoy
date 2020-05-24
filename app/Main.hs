@@ -2,18 +2,17 @@
 module Main (main) where
 
 import Data.Maybe
-import System.Environment (getArgs)
 import Hadertoy
+import System.Environment (getArgs)
 
 main :: IO ()
 main =
   do
     args <- getArgs
     let fn = fromMaybe "./shaders/demo.glsl" (listToMaybe args)
-    win' <- window 800 800 fn
-    case win' of
-      Just win -> run fps (update win)
-      Nothing  -> print "Oops"
+    withGLFW $ \glfw ->
+      withWindow glfw 800 800 fn $ \win ->
+        run fps (update win)
   where
     fps = 25
     update win = render win
