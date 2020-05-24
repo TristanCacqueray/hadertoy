@@ -114,7 +114,8 @@ loadShaderBS st src =
 linkShaderProgram :: GL.Program -> GL.Shader -> GL.Shader -> IO ()
 linkShaderProgram prog vs fs =
   do
-    GL.attachedShaders prog $= [vs, fs]
+    GL.attachShader prog vs
+    GL.attachShader prog fs
     GL.linkProgram prog
     ok <- GL.get (GL.linkStatus prog)
     infoLog <- GL.get (GL.programInfoLog prog)
@@ -124,6 +125,30 @@ linkShaderProgram prog vs fs =
     unless ok $ do
       GL.deleteObjectNames [prog]
       ioError (userError "GLSL linking failed")
+    GL.validateProgram prog
+    status <- GL.get $ GL.validateStatus prog
+    unless status $ do
+      plog <- GL.get $ GL.programInfoLog prog
+      putStrLn plog
+      ioError (userError "GLSL validation failed")
+
+positions :: V.Vector Float
+positions =
+  V.fromList $
+    concatMap
+      (\(a, b) -> [a, b])
+      [ (-1.0, -1.0),
+        (-1.0, 1.0),
+        (1.0, -1.0),
+        (1.0, 1.0)
+      ]
+
+setPositions :: IO ()
+setPositions = do
+  GL.vertexAttribArray (GL.AttribLocation 0) $= GL.Enabled
+  V.unsafeWith positions $ \ptr ->
+    GL.vertexAttribPointer (GL.AttribLocation 0)
+      $= (GL.ToFloat, GL.VertexArrayDescriptor 2 GL.Float 0 ptr)
 
 setupShader :: T.Text -> FilePath -> IO GL.Program
 setupShader version shader =
@@ -137,23 +162,8 @@ setupShader version shader =
     -- link
     linkShaderProgram prog vert frag
     GL.currentProgram $= Just prog
-    -- set positions
-    GL.vertexAttribArray (GL.AttribLocation 0) $= GL.Enabled
-    V.unsafeWith positions $ \ptr ->
-      GL.vertexAttribPointer (GL.AttribLocation 0)
-        $= (GL.ToFloat, GL.VertexArrayDescriptor 2 GL.Float 0 ptr)
     return prog
   where
-    positions :: V.Vector Float
-    positions =
-      V.fromList $
-        concatMap
-          (\(a, b) -> [a, b])
-          [ (-1.0, -1.0),
-            (-1.0, 1.0),
-            (1.0, -1.0),
-            (1.0, 1.0)
-          ]
     vertSrc =
       unlines
         [ "#version " <> T.unpack version,
@@ -178,6 +188,7 @@ withWindow (Init version) width height shader f =
       GLFW.makeContextCurrent (Just win)
       prog <- setupShader version shader
       params <- getUniforms prog
+      setPositions
       f $ Window win prog (DefaultParams (M.lookup "iResolution" params) (M.lookup "iTime" params)) params
     runCallback Nothing = ioError (userError "Window creation failed")
     simpleErrorCallback :: GLFW.Error -> String -> IO ()
@@ -205,6 +216,8 @@ render win =
     let (DefaultParams iRes iTime) = _defParams win
     GL.clearColor $= GL.Color4 0.9 0.1 0.1 1
     GL.clear [GL.ColorBuffer]
+    -- update position
+    setPositions
     -- update resolution
     (width, height) <- GLFW.getFramebufferSize win'
     GL.viewport $= (GL.Position 0 0, GL.Size (fromIntegral width) (fromIntegral height))
