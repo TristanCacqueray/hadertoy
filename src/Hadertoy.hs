@@ -44,19 +44,27 @@ import qualified Graphics.GL.Core31 as GLR
 import Graphics.Rendering.OpenGL (($=))
 import qualified Graphics.Rendering.OpenGL as GL
 import qualified Graphics.UI.GLFW as GLFW
+import System.Environment (lookupEnv, setEnv)
 
 newtype Initialized = Init T.Text
 
-withGLFW :: T.Text -> (Initialized -> IO ()) -> IO ()
-withGLFW v f =
+withGLFW :: String -> (Initialized -> IO ()) -> IO ()
+withGLFW [] f = withGLFW "450" f
+withGLFW version@(v : vs) f =
   bracket
-    GLFW.init
+    initGLFW
     (const GLFW.terminate)
     runCallback
   where
+    initGLFW = do
+      glv <- lookupEnv "MESA_GL_VERSION_OVERRIDE"
+      case glv of
+        Nothing -> setEnv "MESA_GL_VERSION_OVERRIDE" ([v] <> "." <> vs)
+        _ -> return ()
+      GLFW.init
     runCallback initialized =
       if initialized
-        then f $ Init v
+        then f $ Init (T.pack version)
         else ioError (userError "GLFW init failed")
 
 data Param = Param GL.GLint GL.VariableType
