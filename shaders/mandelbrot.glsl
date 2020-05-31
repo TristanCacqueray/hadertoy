@@ -4,11 +4,9 @@
 // Original version: https://www.shadertoy.com/view/4df3Rn
 // Adapted to suport custom center and zoom
 
-#version 130
+#version 120
 // increase this if you have a very fast GPU
 #define AA 1
-
-precision highp float;
 
 uniform vec2 iResolution;
 uniform vec2 center;
