@@ -197,6 +197,11 @@ setupShader version shader =
           "};"
         ]
 
+keyCallback :: Window -> GLFW.Window -> GLFW.Key -> Int -> GLFW.KeyState -> GLFW.ModifierKeys -> IO ()
+keyCallback _ w k _ _ _
+  | k `elem` [GLFW.Key'Q, GLFW.Key'Escape] = GLFW.setWindowShouldClose w True
+keyCallback _ _ _ _ _ _ = return ()
+
 withWindow :: Initialized -> Int -> Int -> BS.ByteString -> (Window -> IO ()) -> IO ()
 withWindow (Init version) width height shader f =
   do
@@ -213,7 +218,9 @@ withWindow (Init version) width height shader f =
       prog <- setupShader version shader
       params <- getUniforms prog
       setPositions
-      f $ Window win prog (DefaultParams (M.lookup "iResolution" params) (M.lookup "iTime" params)) params
+      let window = Window win prog (DefaultParams (M.lookup "iResolution" params) (M.lookup "iTime" params)) params
+      GLFW.setKeyCallback win (Just $ keyCallback window)
+      f window
     runCallback Nothing = ioError (userError "Window creation failed")
     simpleErrorCallback :: GLFW.Error -> String -> IO ()
     simpleErrorCallback e s = putStrLn $ unwords [show e, show s]
@@ -235,6 +242,7 @@ contextCurrent win = GLFW.makeContextCurrent $ Just (_glWindow win)
 render :: Window -> IO Bool
 render win =
   do
+    GLFW.pollEvents
     contextCurrent win
     let win' = _glWindow win
     let (DefaultParams iRes iTime) = _defParams win
