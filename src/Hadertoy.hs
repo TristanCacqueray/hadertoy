@@ -37,6 +37,7 @@ import Control.Concurrent (threadDelay)
 import Control.Exception (bracket)
 import Control.Monad (unless, when)
 import qualified Data.ByteString as BS
+import Data.IORef
 import qualified Data.Map.Strict as M
 import qualified Data.Text as T
 import Data.Text.Encoding (decodeUtf8)
@@ -80,13 +81,19 @@ data ParamValue
 
 data DefaultParams = DefaultParams
   { _iRes :: Maybe Param,
-    _iTime :: Maybe Param
+    _iTime :: Maybe Param,
+    _range :: Maybe Param
+  }
+
+data Env = Env
+  { _envRange :: IORef Float
   }
 
 data Window = Window
   { _glWindow :: GLFW.Window,
     _glProgram :: GL.Program,
     _defParams :: DefaultParams,
+    _env :: Env,
     getParams :: Params
   }
 
@@ -197,6 +204,16 @@ setupShader version shader =
           "};"
         ]
 
+scrollCallback :: Window -> GLFW.Window -> Double -> Double -> IO ()
+scrollCallback (Window _ _ (DefaultParams _ _ (Just range)) (Env rangeRef) _) _ 0.0 direction =
+  do
+    rangeValue' <- readIORef rangeRef
+    let rangeValue = rangeValue' - rangeValue' / 10.0 * double2Float direction
+    writeIORef rangeRef rangeValue
+    writeParam range (ParamFloat rangeValue)
+    print $ "scroll: " <> show direction <> " -> " <> show rangeValue
+scrollCallback _ _ _ _ = return ()
+
 keyCallback :: Window -> GLFW.Window -> GLFW.Key -> Int -> GLFW.KeyState -> GLFW.ModifierKeys -> IO ()
 keyCallback _ w k _ _ _
   | k `elem` [GLFW.Key'Q, GLFW.Key'Escape] = GLFW.setWindowShouldClose w True
@@ -218,8 +235,15 @@ withWindow (Init version) width height shader f =
       prog <- setupShader version shader
       params <- getUniforms prog
       setPositions
-      let window = Window win prog (DefaultParams (M.lookup "iResolution" params) (M.lookup "iTime" params)) params
+      let defParams = DefaultParams (M.lookup "iResolution" params) (M.lookup "iTime" params) (M.lookup "range" params)
+      let startRange = 2.0
+      env <- Env <$> newIORef startRange
+      case _range defParams of
+        Just p -> writeParam p (ParamFloat startRange)
+        _ -> return ()
+      let window = Window win prog defParams env params
       GLFW.setKeyCallback win (Just $ keyCallback window)
+      GLFW.setScrollCallback win (Just $ scrollCallback window)
       f window
     runCallback Nothing = ioError (userError "Window creation failed")
     simpleErrorCallback :: GLFW.Error -> String -> IO ()
@@ -245,7 +269,7 @@ render win =
     GLFW.pollEvents
     contextCurrent win
     let win' = _glWindow win
-    let (DefaultParams iRes iTime) = _defParams win
+    let (DefaultParams iRes iTime _) = _defParams win
     GL.clearColor $= GL.Color4 0.9 0.1 0.1 1
     GL.clear [GL.ColorBuffer]
     -- update position
