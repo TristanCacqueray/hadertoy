@@ -87,7 +87,8 @@ data DefaultParams = DefaultParams
 
 data Env = Env
   { _envRange :: IORef Float,
-    _envPos :: IORef (Int, Int)
+    _envPos :: IORef (Int, Int),
+    _envSize :: IORef (Int, Int)
   }
 
 data Window = Window
@@ -215,7 +216,8 @@ mouseButtonCallback ::
 mouseButtonCallback w _ GLFW.MouseButton'1 GLFW.MouseButtonState'Pressed _ =
   do
     posValue <- readIORef (_envPos (_env w))
-    print $ "click: " <> show posValue
+    sizeValue <- readIORef (_envSize (_env w))
+    print $ "click: " <> show posValue <> " in " <> show sizeValue
 mouseButtonCallback _ _ _ _ _ = return ()
 
 cursorPosCallback :: Window -> GLFW.Window -> Double -> Double -> IO ()
@@ -224,7 +226,7 @@ cursorPosCallback w _ x y = writeIORef posRef (double2Int x, double2Int y)
     posRef = (_envPos (_env w))
 
 scrollCallback :: Window -> GLFW.Window -> Double -> Double -> IO ()
-scrollCallback (Window _ _ (DefaultParams _ _ (Just range)) (Env rangeRef _) _) _ 0.0 direction =
+scrollCallback (Window _ _ (DefaultParams _ _ (Just range)) (Env rangeRef _ _) _) _ 0.0 direction =
   do
     rangeValue' <- readIORef rangeRef
     let rangeValue = rangeValue' - rangeValue' / 10.0 * double2Float direction
@@ -237,6 +239,14 @@ keyCallback :: Window -> GLFW.Window -> GLFW.Key -> Int -> GLFW.KeyState -> GLFW
 keyCallback _ w k _ _ _
   | k `elem` [GLFW.Key'Q, GLFW.Key'Escape] = GLFW.setWindowShouldClose w True
 keyCallback _ _ _ _ _ _ = return ()
+
+windowSizeCallback :: Window -> GLFW.Window -> Int -> Int -> IO ()
+windowSizeCallback w _ x y =
+  do
+    writeIORef sizeRef (x, y)
+    updateResolutions w x y
+  where
+    sizeRef = (_envSize (_env w))
 
 withWindow :: Initialized -> Int -> Int -> BS.ByteString -> (Window -> IO ()) -> IO ()
 withWindow (Init version) width height shader f =
@@ -256,16 +266,18 @@ withWindow (Init version) width height shader f =
       setPositions
       let defParams = DefaultParams (M.lookup "iResolution" params) (M.lookup "iTime" params) (M.lookup "range" params)
       let startRange = 2.0
-      env <- Env <$> newIORef startRange <*> newIORef (0, 0)
+      env <- Env <$> newIORef startRange <*> newIORef (0, 0) <*> newIORef (width, height)
       case _range defParams of
         Just p -> writeParam p (ParamFloat startRange)
         _ -> return ()
       let window = Window win prog defParams env params
+      updateResolutions window width height
       GLFW.setKeyCallback win (Just $ keyCallback window)
       GLFW.setScrollCallback win (Just $ scrollCallback window)
       GLFW.setCursorPosCallback win (Just $ cursorPosCallback window)
       GLFW.setMouseButtonCallback win (Just $ mouseButtonCallback window)
       GLFW.setCursorPosCallback win (Just $ cursorPosCallback window)
+      GLFW.setWindowSizeCallback win (Just $ windowSizeCallback window)
       f window
     runCallback Nothing = ioError (userError "Window creation failed")
     simpleErrorCallback :: GLFW.Error -> String -> IO ()
@@ -285,23 +297,25 @@ withWindow (Init version) width height shader f =
 contextCurrent :: Window -> IO ()
 contextCurrent win = GLFW.makeContextCurrent $ Just (_glWindow win)
 
+updateResolutions :: Window -> Int -> Int -> IO ()
+updateResolutions w x y =
+  do
+    GL.viewport $= (GL.Position 0 0, GL.Size (fromIntegral x) (fromIntegral y))
+    case (_iRes (_defParams w)) of
+      Just v -> writeParam v (ParamFloat3 (fromIntegral x) (fromIntegral y) 0)
+      _ -> return ()
+
 render :: Window -> IO Bool
 render win =
   do
     GLFW.pollEvents
     contextCurrent win
     let win' = _glWindow win
-    let (DefaultParams iRes iTime _) = _defParams win
+    let iTime = _iTime (_defParams win)
     GL.clearColor $= GL.Color4 0.9 0.1 0.1 1
     GL.clear [GL.ColorBuffer]
     -- update position
     setPositions
-    -- update resolution
-    (width, height) <- GLFW.getFramebufferSize win'
-    GL.viewport $= (GL.Position 0 0, GL.Size (fromIntegral width) (fromIntegral height))
-    case iRes of
-      Just v -> writeParam v (ParamFloat3 (fromIntegral width) (fromIntegral height) 0)
-      _ -> return ()
     -- update time
     case iTime of
       Just v -> do
