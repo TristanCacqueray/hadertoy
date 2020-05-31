@@ -60,7 +60,7 @@ isPaused :: Initialized -> IO Bool
 isPaused (Init _ (GlobalEnv paused)) = readIORef paused
 
 withGLFW :: String -> (Initialized -> IO ()) -> IO ()
-withGLFW [] f = withGLFW "450" f
+withGLFW [] f = withGLFW "210" f
 withGLFW version@(v : vs) f =
   bracket
     initGLFW
@@ -218,7 +218,7 @@ setupShader version shader =
             else "attribute vec2 position;",
           "void main (void) {",
           "gl_Position = vec4(position, 0.0, 1.0);",
-          "};"
+          "}"
         ]
 
 mapTuple :: (a -> b) -> (a, a) -> (b, b)
