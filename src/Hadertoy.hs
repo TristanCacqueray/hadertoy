@@ -77,16 +77,19 @@ type Params = M.Map T.Text Param
 
 data ParamValue
   = ParamFloat Float
+  | ParamFloat2 Float Float
   | ParamFloat3 Float Float Float
 
 data DefaultParams = DefaultParams
   { _iRes :: Maybe Param,
     _iTime :: Maybe Param,
-    _range :: Maybe Param
+    _range :: Maybe Param,
+    _center :: Maybe Param
   }
 
 data Env = Env
   { _envRange :: IORef Float,
+    _envCenter :: IORef (Float, Float),
     _envPos :: IORef (Int, Int),
     _envSize :: IORef (Int, Int)
   }
@@ -109,6 +112,7 @@ writeParam :: Param -> ParamValue -> IO ()
 writeParam (Param pid GL.Float') (ParamFloat val) = GLR.glUniform1f pid val
 writeParam (Param pid GL.FloatVec3) (ParamFloat3 v1 v2 v3) = GLR.glUniform3f pid v1 v2 v3
 writeParam (Param pid GL.FloatVec2) (ParamFloat3 v1 v2 _) = GLR.glUniform2f pid v1 v2
+writeParam (Param pid GL.FloatVec2) (ParamFloat2 v1 v2) = GLR.glUniform2f pid v1 v2
 writeParam (Param pid GL.Float') _ = error $ "Invalid param value: " <> show pid
 writeParam (Param pid GL.FloatVec3) _ = error $ "Invalid param value: " <> show pid
 writeParam (Param _ v) _ = error $ "Unknown param type: " <> show v
@@ -206,6 +210,26 @@ setupShader version shader =
           "};"
         ]
 
+mapTuple :: (a -> b) -> (a, a) -> (b, b)
+mapTuple f (a1, a2) = (f a1, f a2)
+
+-- | Convert windows pos to plane pos
+-- | >>> normalizeCoord (400, 200) (800, 800)
+-- | (0.0,-0.5)
+normalizeCoord :: (Int, Int) -> (Int, Int) -> (Float, Float)
+normalizeCoord (x, y) (winX, winY) = mapTuple (* ratio) (toPlane x winX, (-1) * toPlane y winY)
+  where
+    toPlane :: Int -> Int -> Float
+    toPlane pos win = 2.0 * fromIntegral pos / fromIntegral win - 1
+    ratio :: Float
+    ratio = fromIntegral winX / fromIntegral winY
+
+addCoord :: Num a => (a, a) -> (a, a) -> (a, a)
+addCoord (x, y) (x', y') = (x + x', y + y')
+
+scaleCoord :: Num a => a -> (a, a) -> (a, a)
+scaleCoord f = mapTuple (* f)
+
 mouseButtonCallback ::
   Window ->
   GLFW.Window ->
@@ -217,7 +241,16 @@ mouseButtonCallback w _ GLFW.MouseButton'1 GLFW.MouseButtonState'Pressed _ =
   do
     posValue <- readIORef (_envPos (_env w))
     sizeValue <- readIORef (_envSize (_env w))
-    print $ "click: " <> show posValue <> " in " <> show sizeValue
+    centerValue <- readIORef (_envCenter (_env w))
+    rangeValue <- readIORef (_envRange (_env w))
+    let coord = normalizeCoord posValue sizeValue
+    let newCenter = addCoord centerValue (scaleCoord rangeValue coord)
+    writeIORef (_envCenter (_env w)) newCenter
+    case _center (_defParams w) of
+      Just p -> do
+        writeParam p (uncurry ParamFloat2 newCenter)
+        print $ "click: " <> show coord <> " -> " <> show newCenter
+      Nothing -> print $ "click: " <> show coord
 mouseButtonCallback _ _ _ _ _ = return ()
 
 cursorPosCallback :: Window -> GLFW.Window -> Double -> Double -> IO ()
@@ -226,7 +259,7 @@ cursorPosCallback w _ x y = writeIORef posRef (double2Int x, double2Int y)
     posRef = (_envPos (_env w))
 
 scrollCallback :: Window -> GLFW.Window -> Double -> Double -> IO ()
-scrollCallback (Window _ _ (DefaultParams _ _ (Just range)) (Env rangeRef _ _) _) _ 0.0 direction =
+scrollCallback (Window _ _ (DefaultParams _ _ (Just range) _) (Env rangeRef _ _ _) _) _ 0.0 direction =
   do
     rangeValue' <- readIORef rangeRef
     let rangeValue = rangeValue' - rangeValue' / 10.0 * double2Float direction
@@ -264,11 +297,20 @@ withWindow (Init version) width height shader f =
       prog <- setupShader version shader
       params <- getUniforms prog
       setPositions
-      let defParams = DefaultParams (M.lookup "iResolution" params) (M.lookup "iTime" params) (M.lookup "range" params)
+      let defParams =
+            DefaultParams
+              (M.lookup "iResolution" params)
+              (M.lookup "iTime" params)
+              (M.lookup "range" params)
+              (M.lookup "center" params)
       let startRange = 2.0
-      env <- Env <$> newIORef startRange <*> newIORef (0, 0) <*> newIORef (width, height)
+      let startPos = (-0.745, 0.0)
+      env <- Env <$> newIORef startRange <*> newIORef startPos <*> newIORef (0, 0) <*> newIORef (width, height)
       case _range defParams of
         Just p -> writeParam p (ParamFloat startRange)
+        _ -> return ()
+      case _center defParams of
+        Just p -> writeParam p (uncurry ParamFloat2 startPos)
         _ -> return ()
       let window = Window win prog defParams env params
       updateResolutions window width height
