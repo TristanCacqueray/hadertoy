@@ -42,7 +42,7 @@ import qualified Data.Map.Strict as M
 import qualified Data.Text as T
 import Data.Text.Encoding (decodeUtf8)
 import qualified Data.Vector.Storable as V
-import GHC.Float (double2Float)
+import GHC.Float (double2Float, double2Int)
 import qualified Graphics.GL.Core31 as GLR
 import Graphics.Rendering.OpenGL (($=))
 import qualified Graphics.Rendering.OpenGL as GL
@@ -86,7 +86,8 @@ data DefaultParams = DefaultParams
   }
 
 data Env = Env
-  { _envRange :: IORef Float
+  { _envRange :: IORef Float,
+    _envPos :: IORef (Int, Int)
   }
 
 data Window = Window
@@ -204,8 +205,26 @@ setupShader version shader =
           "};"
         ]
 
+mouseButtonCallback ::
+  Window ->
+  GLFW.Window ->
+  GLFW.MouseButton ->
+  GLFW.MouseButtonState ->
+  GLFW.ModifierKeys ->
+  IO ()
+mouseButtonCallback w _ GLFW.MouseButton'1 GLFW.MouseButtonState'Pressed _ =
+  do
+    posValue <- readIORef (_envPos (_env w))
+    print $ "click: " <> show posValue
+mouseButtonCallback _ _ _ _ _ = return ()
+
+cursorPosCallback :: Window -> GLFW.Window -> Double -> Double -> IO ()
+cursorPosCallback w _ x y = writeIORef posRef (double2Int x, double2Int y)
+  where
+    posRef = (_envPos (_env w))
+
 scrollCallback :: Window -> GLFW.Window -> Double -> Double -> IO ()
-scrollCallback (Window _ _ (DefaultParams _ _ (Just range)) (Env rangeRef) _) _ 0.0 direction =
+scrollCallback (Window _ _ (DefaultParams _ _ (Just range)) (Env rangeRef _) _) _ 0.0 direction =
   do
     rangeValue' <- readIORef rangeRef
     let rangeValue = rangeValue' - rangeValue' / 10.0 * double2Float direction
@@ -237,13 +256,16 @@ withWindow (Init version) width height shader f =
       setPositions
       let defParams = DefaultParams (M.lookup "iResolution" params) (M.lookup "iTime" params) (M.lookup "range" params)
       let startRange = 2.0
-      env <- Env <$> newIORef startRange
+      env <- Env <$> newIORef startRange <*> newIORef (0, 0)
       case _range defParams of
         Just p -> writeParam p (ParamFloat startRange)
         _ -> return ()
       let window = Window win prog defParams env params
       GLFW.setKeyCallback win (Just $ keyCallback window)
       GLFW.setScrollCallback win (Just $ scrollCallback window)
+      GLFW.setCursorPosCallback win (Just $ cursorPosCallback window)
+      GLFW.setMouseButtonCallback win (Just $ mouseButtonCallback window)
+      GLFW.setCursorPosCallback win (Just $ cursorPosCallback window)
       f window
     runCallback Nothing = ioError (userError "Window creation failed")
     simpleErrorCallback :: GLFW.Error -> String -> IO ()
