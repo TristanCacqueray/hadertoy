@@ -25,6 +25,7 @@ module Hadertoy
     withGLFW,
     Window,
     withWindow,
+    isPaused,
     getParam,
     writeParam,
     readShader,
@@ -49,7 +50,14 @@ import qualified Graphics.Rendering.OpenGL as GL
 import qualified Graphics.UI.GLFW as GLFW
 import System.Environment (lookupEnv, setEnv)
 
-newtype Initialized = Init T.Text
+data GlobalEnv = GlobalEnv
+  { _envPaused :: IORef Bool
+  }
+
+data Initialized = Init T.Text GlobalEnv
+
+isPaused :: Initialized -> IO Bool
+isPaused (Init _ (GlobalEnv paused)) = readIORef paused
 
 withGLFW :: String -> (Initialized -> IO ()) -> IO ()
 withGLFW [] f = withGLFW "450" f
@@ -67,7 +75,9 @@ withGLFW version@(v : vs) f =
       GLFW.init
     runCallback initialized =
       if initialized
-        then f $ Init (T.pack version)
+        then do
+          glEnv <- GlobalEnv <$> newIORef False
+          f $ Init (T.pack version) glEnv
         else ioError (userError "GLFW init failed")
 
 data Param = Param GL.GLint GL.VariableType
@@ -95,7 +105,8 @@ data Env = Env
   }
 
 data Window = Window
-  { _glWindow :: GLFW.Window,
+  { _glEnv :: GlobalEnv,
+    _glWindow :: GLFW.Window,
     _glProgram :: GL.Program,
     _defParams :: DefaultParams,
     _env :: Env,
@@ -259,7 +270,7 @@ cursorPosCallback w _ x y = writeIORef posRef (double2Int x, double2Int y)
     posRef = (_envPos (_env w))
 
 scrollCallback :: Window -> GLFW.Window -> Double -> Double -> IO ()
-scrollCallback (Window _ _ (DefaultParams _ _ (Just range) _) (Env rangeRef _ _ _) _) _ 0.0 direction =
+scrollCallback (Window _ _ _ (DefaultParams _ _ (Just range) _) (Env rangeRef _ _ _) _) _ 0.0 direction =
   do
     rangeValue' <- readIORef rangeRef
     let rangeValue = rangeValue' - rangeValue' / 10.0 * double2Float direction
@@ -271,6 +282,13 @@ scrollCallback _ _ _ _ = return ()
 keyCallback :: Window -> GLFW.Window -> GLFW.Key -> Int -> GLFW.KeyState -> GLFW.ModifierKeys -> IO ()
 keyCallback _ w k _ _ _
   | k `elem` [GLFW.Key'Q, GLFW.Key'Escape] = GLFW.setWindowShouldClose w True
+keyCallback w _ GLFW.Key'Space _ GLFW.KeyState'Pressed _ = togglePause (_envPaused (_glEnv w))
+  where
+    togglePause pauseRef = do
+      pauseValue <- readIORef pauseRef
+      writeIORef pauseRef (not pauseValue)
+      print $ "key: " <> ((if pauseValue then "unpaused" else "paused") :: String)
+
 keyCallback _ _ _ _ _ _ = return ()
 
 windowSizeCallback :: Window -> GLFW.Window -> Int -> Int -> IO ()
@@ -282,7 +300,7 @@ windowSizeCallback w _ x y =
     sizeRef = (_envSize (_env w))
 
 withWindow :: Initialized -> Int -> Int -> BS.ByteString -> (Window -> IO ()) -> IO ()
-withWindow (Init version) width height shader f =
+withWindow (Init version glEnv) width height shader f =
   do
     GLFW.setErrorCallback $ Just simpleErrorCallback
     bracket mkWindow closeWindow runCallback
@@ -312,7 +330,7 @@ withWindow (Init version) width height shader f =
       case _center defParams of
         Just p -> writeParam p (uncurry ParamFloat2 startPos)
         _ -> return ()
-      let window = Window win prog defParams env params
+      let window = Window glEnv win prog defParams env params
       updateResolutions window width height
       GLFW.setKeyCallback win (Just $ keyCallback window)
       GLFW.setScrollCallback win (Just $ scrollCallback window)
@@ -350,7 +368,6 @@ updateResolutions w x y =
 render :: Window -> IO Bool
 render win =
   do
-    GLFW.pollEvents
     contextCurrent win
     let win' = _glWindow win
     let iTime = _iTime (_defParams win)
@@ -402,6 +419,7 @@ run fps game =
               print $ "fps: " <> show (frame - tick_frame)
               return (frame, cur_time)
             else return tick
+        GLFW.pollEvents
         run' (frame + 1) new_tick
     freq :: Double
     freq = 1 / fromIntegral fps

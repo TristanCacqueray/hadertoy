@@ -14,7 +14,11 @@ main =
     let version = fromMaybe "450" version'
     withGLFW version $ \glfw ->
       withWindow glfw 800 800 shader $ \win ->
-        run fps (update win)
+        run fps (update glfw win)
   where
     fps = 25
-    update win = render win
+    update glfw win = do
+      paused <- isPaused glfw
+      if paused
+        then return False
+        else render win
