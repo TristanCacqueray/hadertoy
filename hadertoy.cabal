@@ -63,6 +63,7 @@ test-suite hadertoy-test
   hs-source-dirs:      test
   main-is:             Spec.hs
   build-depends:       hadertoy
+                     , doctest
   ghc-options:         -threaded
                        -rtsopts
                        -with-rtsopts=-N

@@ -1,5 +1,6 @@
 module Main (main) where
 
+import Test.DocTest
 
 main :: IO ()
-main = putStrLn ("Test suite is not implemented" :: String)
+main = doctest ["-isrc", "src/Hadertoy.hs"]

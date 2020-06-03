@@ -225,8 +225,8 @@ mapTuple :: (a -> b) -> (a, a) -> (b, b)
 mapTuple f (a1, a2) = (f a1, f a2)
 
 -- | Convert windows pos to plane pos
--- | >>> normalizeCoord (400, 200) (800, 800)
--- | (0.0,-0.5)
+-- >>> normalizeCoord (400, 200) (800, 800)
+-- (0.0,0.5)
 normalizeCoord :: (Int, Int) -> (Int, Int) -> (Float, Float)
 normalizeCoord (x, y) (winX, winY) = mapTuple (* ratio) (toPlane x winX, (-1) * toPlane y winY)
   where
