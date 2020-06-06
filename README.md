@@ -16,3 +16,5 @@ the range and center uniform values using mouse scroll and click:
 ```shell
 $ stack run ./shaders/mandelbrot.glsl
 ```
+
+In map/julia mode, middle click on the map update the julia seed.

@@ -27,6 +27,8 @@ module Hadertoy
     withWindow,
     isPaused,
     setEnvCenter,
+    setEnvSeed,
+    setEnvHookClick,
     getParam,
     writeParam,
     readShader,
@@ -57,9 +59,6 @@ data GlobalEnv = GlobalEnv
     _envSeed :: IORef (Float, Float)
   }
 
-defaultSeed :: (Float, Float)
-defaultSeed = (-1.25, 0.028)
-
 -- | Init indicates glfw is ready, the shader version Text and the GlobalEnv record.
 data Initialized = Init T.Text GlobalEnv
 
@@ -83,7 +82,7 @@ withGLFW version@(v : vs) f =
     runCallback initialized =
       if initialized
         then do
-          glEnv <- GlobalEnv <$> newIORef False <*> newIORef defaultSeed
+          glEnv <- GlobalEnv <$> newIORef False <*> newIORef (0.0, 0.0)
           f $ Init (T.pack version) glEnv
         else ioError (userError "GLFW init failed")
 
@@ -111,7 +110,8 @@ data Env = Env
   { _envRange :: IORef Float,
     _envCenter :: IORef (Float, Float),
     _envPos :: IORef (Int, Int),
-    _envSize :: IORef (Int, Int)
+    _envSize :: IORef (Int, Int),
+    _envHookClick :: IORef (Maybe ((Float, Float) -> IO ()))
   }
 
 data Window = Window
@@ -123,6 +123,16 @@ data Window = Window
     getParams :: Params
   }
 
+setEnvSeed :: Window -> (Float, Float) -> IO Bool
+setEnvSeed w newSeed = do
+  writeIORef (_envSeed (_glEnv w)) newSeed
+  case _seed (_defParams w) of
+    Just p -> do
+      contextCurrent w
+      writeParam p (uncurry ParamFloat2 newSeed)
+      return True
+    Nothing -> return False
+
 setEnvCenter :: Window -> (Float, Float) -> IO Bool
 setEnvCenter w newCenter = do
   writeIORef (_envCenter (_env w)) newCenter
@@ -132,6 +142,9 @@ setEnvCenter w newCenter = do
       writeParam p (uncurry ParamFloat2 newCenter)
       return True
     Nothing -> return False
+
+setEnvHookClick :: Window -> ((Float, Float) -> IO ()) -> IO ()
+setEnvHookClick w cb = writeIORef (_envHookClick (_env w)) (Just cb)
 
 instance Show Window where
   show _ = "Window[]"
@@ -275,7 +288,7 @@ mouseButtonCallback ::
   GLFW.MouseButtonState ->
   GLFW.ModifierKeys ->
   IO ()
-mouseButtonCallback w _ GLFW.MouseButton'1 GLFW.MouseButtonState'Pressed _ =
+mouseButtonCallback w _ btn GLFW.MouseButtonState'Pressed _ =
   do
     posValue <- readIORef (_envPos (_env w))
     sizeValue <- readIORef (_envSize (_env w))
@@ -283,11 +296,23 @@ mouseButtonCallback w _ GLFW.MouseButton'1 GLFW.MouseButtonState'Pressed _ =
     rangeValue <- readIORef (_envRange (_env w))
     let coord = normalizeCoord posValue sizeValue
     let newCenter = addCoord centerValue (scaleCoord rangeValue coord)
+    case btn of
+      GLFW.MouseButton'1 -> updatePos w coord newCenter
+      GLFW.MouseButton'3 -> do
+        hookCallback <- readIORef (_envHookClick (_env w))
+        case hookCallback of
+          Just f -> f newCenter
+          _ -> return ()
+      _ -> return ()
+mouseButtonCallback _ _ _ _ _ = return ()
+
+updatePos :: Window -> (Float, Float) -> (Float, Float) -> IO ()
+updatePos w coord newCenter =
+  do
     update <- setEnvCenter w newCenter
     if update
       then print $ "click: " <> show coord <> " -> " <> show newCenter
       else print $ "click: " <> show coord
-mouseButtonCallback _ _ _ _ _ = return ()
 
 cursorPosCallback :: Window -> GLFW.Window -> Double -> Double -> IO ()
 cursorPosCallback w _ x y = writeIORef posRef (double2Int x, double2Int y)
@@ -295,7 +320,7 @@ cursorPosCallback w _ x y = writeIORef posRef (double2Int x, double2Int y)
     posRef = (_envPos (_env w))
 
 scrollCallback :: Window -> GLFW.Window -> Double -> Double -> IO ()
-scrollCallback win@(Window _ _ _ (DefaultParams _ _ (Just range) _ _) (Env rangeRef _ _ _) _) _ 0.0 direction =
+scrollCallback win@(Window _ _ _ (DefaultParams _ _ (Just range) _ _ ) (Env rangeRef _ _ _ _) _) _ 0.0 direction =
   do
     rangeValue' <- readIORef rangeRef
     let rangeValue = rangeValue' - rangeValue' / 10.0 * double2Float direction
@@ -348,7 +373,11 @@ withWindow (Init version glEnv) width height shader f =
               (M.lookup "center" params)
               (M.lookup "seed" params)
       let startRange = 2.0
-      env <- Env <$> newIORef startRange <*> newIORef (0.0, 0.0) <*> newIORef (0, 0) <*> newIORef (width, height)
+      env <- Env <$> newIORef startRange
+                 <*> newIORef (0.0, 0.0)
+                 <*> newIORef (0, 0)
+                 <*> newIORef (width, height)
+                 <*> newIORef Nothing
       case _range defParams of
         Just p -> writeParam p (ParamFloat startRange)
         _ -> return ()
