@@ -26,6 +26,7 @@ module Hadertoy
     Window,
     withWindow,
     isPaused,
+    setEnvCenter,
     getParam,
     writeParam,
     readShader,
@@ -121,6 +122,16 @@ data Window = Window
     _env :: Env,
     getParams :: Params
   }
+
+setEnvCenter :: Window -> (Float, Float) -> IO Bool
+setEnvCenter w newCenter = do
+  writeIORef (_envCenter (_env w)) newCenter
+  case _center (_defParams w) of
+    Just p -> do
+      contextCurrent w
+      writeParam p (uncurry ParamFloat2 newCenter)
+      return True
+    Nothing -> return False
 
 instance Show Window where
   show _ = "Window[]"
@@ -272,13 +283,10 @@ mouseButtonCallback w _ GLFW.MouseButton'1 GLFW.MouseButtonState'Pressed _ =
     rangeValue <- readIORef (_envRange (_env w))
     let coord = normalizeCoord posValue sizeValue
     let newCenter = addCoord centerValue (scaleCoord rangeValue coord)
-    writeIORef (_envCenter (_env w)) newCenter
-    case _center (_defParams w) of
-      Just p -> do
-        contextCurrent w
-        writeParam p (uncurry ParamFloat2 newCenter)
-        print $ "click: " <> show coord <> " -> " <> show newCenter
-      Nothing -> print $ "click: " <> show coord
+    update <- setEnvCenter w newCenter
+    if update
+      then print $ "click: " <> show coord <> " -> " <> show newCenter
+      else print $ "click: " <> show coord
 mouseButtonCallback _ _ _ _ _ = return ()
 
 cursorPosCallback :: Window -> GLFW.Window -> Double -> Double -> IO ()
@@ -340,13 +348,9 @@ withWindow (Init version glEnv) width height shader f =
               (M.lookup "center" params)
               (M.lookup "seed" params)
       let startRange = 2.0
-      let startPos = (-0.745, 0.0)
-      env <- Env <$> newIORef startRange <*> newIORef startPos <*> newIORef (0, 0) <*> newIORef (width, height)
+      env <- Env <$> newIORef startRange <*> newIORef (0.0, 0.0) <*> newIORef (0, 0) <*> newIORef (width, height)
       case _range defParams of
         Just p -> writeParam p (ParamFloat startRange)
-        _ -> return ()
-      case _center defParams of
-        Just p -> writeParam p (uncurry ParamFloat2 startPos)
         _ -> return ()
       let window = Window glEnv win prog defParams env params
       updateResolutions window width height
