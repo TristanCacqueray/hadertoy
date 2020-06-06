@@ -266,6 +266,7 @@ mouseButtonCallback w _ GLFW.MouseButton'1 GLFW.MouseButtonState'Pressed _ =
     writeIORef (_envCenter (_env w)) newCenter
     case _center (_defParams w) of
       Just p -> do
+        contextCurrent w
         writeParam p (uncurry ParamFloat2 newCenter)
         print $ "click: " <> show coord <> " -> " <> show newCenter
       Nothing -> print $ "click: " <> show coord
@@ -277,11 +278,12 @@ cursorPosCallback w _ x y = writeIORef posRef (double2Int x, double2Int y)
     posRef = (_envPos (_env w))
 
 scrollCallback :: Window -> GLFW.Window -> Double -> Double -> IO ()
-scrollCallback (Window _ _ _ (DefaultParams _ _ (Just range) _) (Env rangeRef _ _ _) _) _ 0.0 direction =
+scrollCallback win@(Window _ _ _ (DefaultParams _ _ (Just range) _) (Env rangeRef _ _ _) _) _ 0.0 direction =
   do
     rangeValue' <- readIORef rangeRef
     let rangeValue = rangeValue' - rangeValue' / 10.0 * double2Float direction
     writeIORef rangeRef rangeValue
+    contextCurrent win
     writeParam range (ParamFloat rangeValue)
     print $ "scroll: " <> show direction <> " -> " <> show rangeValue
 scrollCallback _ _ _ _ = return ()
@@ -367,6 +369,7 @@ contextCurrent win = GLFW.makeContextCurrent $ Just (_glWindow win)
 updateResolutions :: Window -> Int -> Int -> IO ()
 updateResolutions w x y =
   do
+    contextCurrent w
     GL.viewport $= (GL.Position 0 0, GL.Size (fromIntegral x) (fromIntegral y))
     case (_iRes (_defParams w)) of
       Just v -> writeParam v (ParamFloat3 (fromIntegral x) (fromIntegral y) 0)
