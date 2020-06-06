@@ -14,22 +14,25 @@ uniform float range;
 const int max_iter = 200;
 const float bailout = 256.0;
 
-#ifdef JULIA_MODE
 uniform vec2 seed;
-#endif
 
-float mandelbrot(in vec2 c) {
+float mandelbrot(in vec2 p) {
   float l = 0.0;
   int i;
   vec2 z =
 #ifdef JULIA_MODE
-    c;
+    p;
 #else
     vec2(0.0);
-  vec2 seed = c;
+#endif
+  vec2 c =
+#ifdef JULIA_MODE
+    seed;
+#else
+    p;
 #endif
   for( i=0; i<max_iter; i++) {
-    z = vec2(z.x*z.x - z.y*z.y, 2.0*z.x*z.y) + seed;
+    z = vec2(z.x*z.x - z.y*z.y, 2.0*z.x*z.y) + c;
     if (dot(z,z) > bailout)
       break;
     l += 1.0;
@@ -41,6 +44,8 @@ float mandelbrot(in vec2 c) {
 
 void mainImage(out vec4 fragColor, in vec2 fragCoord) {
   vec3 col = vec3(0.0);
+  float factor = 50.0 * 1.0 / range;
+  vec2 roundedSeed = round(seed * factor);
 
 #if AA>1
   for( int m=0; m<AA; m++ )
@@ -53,6 +58,12 @@ void mainImage(out vec4 fragColor, in vec2 fragCoord) {
 #endif
         float zoom = range;
         vec2 c = center + p * zoom;
+#ifndef JULIA_MODE
+   if ((seed.x != 0.0 || seed.y != 0.0) && round(c * factor) == roundedSeed) {
+     fragColor = vec4(1.0, 0.5, 0.5, 1.0);
+     return ;
+   }
+#endif
         float l = mandelbrot(c);
 
         col += 0.5 + 0.5*cos( 3.0 + l*0.15 + vec3(0.0,0.6,1.0));
