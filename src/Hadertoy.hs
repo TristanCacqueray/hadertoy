@@ -50,14 +50,20 @@ import qualified Graphics.Rendering.OpenGL as GL
 import qualified Graphics.UI.GLFW as GLFW
 import System.Environment (lookupEnv, setEnv)
 
+-- | GlobalEnv is available to every window
 data GlobalEnv = GlobalEnv
-  { _envPaused :: IORef Bool
+  { _envPaused :: IORef Bool,
+    _envSeed :: IORef (Float, Float)
   }
 
+defaultSeed :: (Float, Float)
+defaultSeed = (-1.25, 0.028)
+
+-- | Init indicates glfw is ready, the shader version Text and the GlobalEnv record.
 data Initialized = Init T.Text GlobalEnv
 
 isPaused :: Initialized -> IO Bool
-isPaused (Init _ (GlobalEnv paused)) = readIORef paused
+isPaused (Init _ env) = readIORef (_envPaused env)
 
 withGLFW :: String -> (Initialized -> IO ()) -> IO ()
 withGLFW [] f = withGLFW "210" f
@@ -76,15 +82,17 @@ withGLFW version@(v : vs) f =
     runCallback initialized =
       if initialized
         then do
-          glEnv <- GlobalEnv <$> newIORef False
+          glEnv <- GlobalEnv <$> newIORef False <*> newIORef defaultSeed
           f $ Init (T.pack version) glEnv
         else ioError (userError "GLFW init failed")
 
+-- | Param describe an Uniform variable
 data Param = Param GL.GLint GL.VariableType
   deriving stock (Show)
 
 type Params = M.Map T.Text Param
 
+-- | ParamValue describes an Uniform variable value
 data ParamValue
   = ParamFloat Float
   | ParamFloat2 Float Float
@@ -94,7 +102,8 @@ data DefaultParams = DefaultParams
   { _iRes :: Maybe Param,
     _iTime :: Maybe Param,
     _range :: Maybe Param,
-    _center :: Maybe Param
+    _center :: Maybe Param,
+    _seed :: Maybe Param
   }
 
 data Env = Env
@@ -278,7 +287,7 @@ cursorPosCallback w _ x y = writeIORef posRef (double2Int x, double2Int y)
     posRef = (_envPos (_env w))
 
 scrollCallback :: Window -> GLFW.Window -> Double -> Double -> IO ()
-scrollCallback win@(Window _ _ _ (DefaultParams _ _ (Just range) _) (Env rangeRef _ _ _) _) _ 0.0 direction =
+scrollCallback win@(Window _ _ _ (DefaultParams _ _ (Just range) _ _) (Env rangeRef _ _ _) _) _ 0.0 direction =
   do
     rangeValue' <- readIORef rangeRef
     let rangeValue = rangeValue' - rangeValue' / 10.0 * double2Float direction
@@ -297,7 +306,6 @@ keyCallback w _ GLFW.Key'Space _ GLFW.KeyState'Pressed _ = togglePause (_envPaus
       pauseValue <- readIORef pauseRef
       writeIORef pauseRef (not pauseValue)
       print $ "key: " <> ((if pauseValue then "unpaused" else "paused") :: String)
-
 keyCallback _ _ _ _ _ _ = return ()
 
 windowSizeCallback :: Window -> GLFW.Window -> Int -> Int -> IO ()
@@ -330,6 +338,7 @@ withWindow (Init version glEnv) width height shader f =
               (M.lookup "iTime" params)
               (M.lookup "range" params)
               (M.lookup "center" params)
+              (M.lookup "seed" params)
       let startRange = 2.0
       let startPos = (-0.745, 0.0)
       env <- Env <$> newIORef startRange <*> newIORef startPos <*> newIORef (0, 0) <*> newIORef (width, height)
