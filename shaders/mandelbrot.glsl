@@ -14,12 +14,22 @@ uniform float range;
 const int max_iter = 200;
 const float bailout = 256.0;
 
+#ifdef JULIA_MODE
+uniform vec2 seed;
+#endif
+
 float mandelbrot(in vec2 c) {
   float l = 0.0;
   int i;
-  vec2 z = vec2(0.0);
+  vec2 z =
+#ifdef JULIA_MODE
+    c;
+#else
+    vec2(0.0);
+  vec2 seed = c;
+#endif
   for( i=0; i<max_iter; i++) {
-    z = vec2(z.x*z.x - z.y*z.y, 2.0*z.x*z.y) + c;
+    z = vec2(z.x*z.x - z.y*z.y, 2.0*z.x*z.y) + seed;
     if (dot(z,z) > bailout)
       break;
     l += 1.0;
