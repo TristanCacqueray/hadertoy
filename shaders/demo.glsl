@@ -1,3 +1,5 @@
+#version 120
+
 uniform vec3      iResolution; // Viewport resolution (in pixels)
 uniform float     iTime;       // Shader playback time (in seconds)
 uniform vec4      iMouse;      // Mouse pixel coords. xy: current (if MLB down) + zw: click

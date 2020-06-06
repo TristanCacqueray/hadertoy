@@ -41,7 +41,7 @@ import qualified Data.ByteString as BS
 import Data.IORef
 import qualified Data.Map.Strict as M
 import qualified Data.Text as T
-import Data.Text.Encoding (decodeUtf8)
+import Data.Text.Encoding (decodeUtf8, encodeUtf8)
 import qualified Data.Vector.Storable as V
 import GHC.Float (double2Float, double2Int)
 import qualified Graphics.GL.Core31 as GLR
@@ -131,12 +131,18 @@ writeParam (Param _ v) _ = error $ "Unknown param type: " <> show v
 -- loadShader :: GL.ShaderType -> FilePath -> IO GL.Shader
 -- loadShader st filePath = BS.readFile filePath >>= loadShaderBS st
 
-readShader :: FilePath -> IO (BS.ByteString, Maybe String)
+readShader :: FilePath -> IO (T.Text, Maybe String)
 readShader fp =
   do
     fc <- BS.readFile fp
-    return (fc, checkVersion $ T.lines $ decodeUtf8 fc)
+    let shader = T.lines $ decodeUtf8 fc
+    return (T.unlines $ dropVersion shader, checkVersion shader)
   where
+    dropVersion :: [T.Text] -> [T.Text]
+    dropVersion [] = []
+    dropVersion (x : xs)
+      | T.isPrefixOf "#version" x = dropVersion xs
+      | otherwise = x : dropVersion xs
     checkVersion :: [T.Text] -> Maybe String
     checkVersion [] = Nothing
     checkVersion (x : xs)
@@ -196,13 +202,13 @@ setPositions = do
     GL.vertexAttribPointer (GL.AttribLocation 0)
       $= (GL.ToFloat, GL.VertexArrayDescriptor 2 GL.Float 0 ptr)
 
-setupShader :: T.Text -> BS.ByteString -> IO GL.Program
+setupShader :: T.Text -> T.Text -> IO GL.Program
 setupShader version shader =
   do
     prog <- GL.createProgram
     -- compile
     vert <- loadShaderBS GL.VertexShader (GL.packUtf8 vertSrc)
-    frag <- loadShaderBS GL.FragmentShader shader
+    frag <- loadShaderBS GL.FragmentShader (encodeUtf8 (packVersion <> shader))
     -- attrs
     GL.attribLocation prog "position" $= GL.AttribLocation 0
     -- link
@@ -210,9 +216,10 @@ setupShader version shader =
     GL.currentProgram $= Just prog
     return prog
   where
+    packVersion = T.pack "#version " <> version <> T.pack "\n"
     vertSrc =
       unlines
-        [ "#version " <> T.unpack version,
+        [ T.unpack packVersion,
           if version == "450"
             then "in vec2 position;"
             else "attribute vec2 position;",
@@ -299,7 +306,7 @@ windowSizeCallback w _ x y =
   where
     sizeRef = (_envSize (_env w))
 
-withWindow :: Initialized -> Int -> Int -> BS.ByteString -> (Window -> IO ()) -> IO ()
+withWindow :: Initialized -> Int -> Int -> T.Text -> (Window -> IO ()) -> IO ()
 withWindow (Init version glEnv) width height shader f =
   do
     GLFW.setErrorCallback $ Just simpleErrorCallback
