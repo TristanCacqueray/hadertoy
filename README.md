@@ -18,3 +18,20 @@ $ stack run ./shaders/mandelbrot.glsl
 ```
 
 In map/julia mode, middle click on the map update the julia seed.
+
+
+## Development
+
+Get documentation and hoogle service by running:
+
+```shell
+$ nix-shell --command "hoogle server -p 8080 --local --haskell"
+```
+
+When using nix, use [nixGL](https://github.com/guibou/nixGL) to run the
+build, for example:
+
+```shell
+$ nix-shell
+$ nixGLIntel cabal new-run exe:hadertoy
+```

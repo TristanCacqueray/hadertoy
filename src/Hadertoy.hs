@@ -320,7 +320,7 @@ cursorPosCallback w _ x y = writeIORef posRef (double2Int x, double2Int y)
     posRef = (_envPos (_env w))
 
 scrollCallback :: Window -> GLFW.Window -> Double -> Double -> IO ()
-scrollCallback win@(Window _ _ _ (DefaultParams _ _ (Just range) _ _ ) (Env rangeRef _ _ _ _) _) _ 0.0 direction =
+scrollCallback win@(Window _ _ _ (DefaultParams _ _ (Just range) _ _) (Env rangeRef _ _ _ _) _) _ 0.0 direction =
   do
     rangeValue' <- readIORef rangeRef
     let rangeValue = rangeValue' - rangeValue' / 10.0 * double2Float direction
@@ -373,11 +373,12 @@ withWindow (Init version glEnv) width height shader f =
               (M.lookup "center" params)
               (M.lookup "seed" params)
       let startRange = 2.0
-      env <- Env <$> newIORef startRange
-                 <*> newIORef (0.0, 0.0)
-                 <*> newIORef (0, 0)
-                 <*> newIORef (width, height)
-                 <*> newIORef Nothing
+      env <-
+        Env <$> newIORef startRange
+          <*> newIORef (0.0, 0.0)
+          <*> newIORef (0, 0)
+          <*> newIORef (width, height)
+          <*> newIORef Nothing
       case _range defParams of
         Just p -> writeParam p (ParamFloat startRange)
         _ -> return ()

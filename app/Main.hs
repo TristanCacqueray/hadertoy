@@ -1,3 +1,5 @@
+{-# LANGUAGE OverloadedStrings #-}
+
 -- | A demo hadertoy app
 module Main (main) where
 
