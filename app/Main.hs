@@ -14,7 +14,7 @@ main =
     args <- getArgs
     let fn = fromMaybe "./shaders/demo.glsl" (listToMaybe args)
     (shader, version') <- readShader fn
-    let version = fromMaybe "450" version'
+    let version = fromMaybe V120 version'
     withGLFW version $ \glfw ->
       withWindow glfw 800 800 shader $ \win -> do
         _ <- setEnvCenter win (-0.745, 0.0)

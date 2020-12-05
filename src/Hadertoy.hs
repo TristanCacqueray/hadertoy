@@ -22,9 +22,11 @@
 -- https://github.com/bergey/haskell-OpenGL-examples/blob/master/glfw/Modern.hs
 module Hadertoy
   ( Initialized,
+    GLSLVersion (..),
     withGLFW,
     Window,
     withWindow,
+    readGLSLVersion,
     isPaused,
     setEnvCenter,
     setEnvSeed,
@@ -43,6 +45,7 @@ import Control.Monad (unless, when)
 import qualified Data.ByteString as BS
 import Data.IORef
 import qualified Data.Map.Strict as M
+import Data.Text (Text)
 import qualified Data.Text as T
 import Data.Text.Encoding (decodeUtf8, encodeUtf8)
 import qualified Data.Vector.Storable as V
@@ -54,20 +57,47 @@ import qualified Graphics.UI.GLFW as GLFW
 import System.Environment (lookupEnv, setEnv)
 
 -- | GlobalEnv is available to every window
+data Status
+  = Paused
+  | Running
+  deriving stock (Eq, Show)
+
+toggleStatus :: Status -> Status
+toggleStatus Paused = Running
+toggleStatus Running = Paused
+
 data GlobalEnv = GlobalEnv
-  { _envPaused :: IORef Bool,
+  { _envStatus :: IORef Status,
     _envSeed :: IORef (Float, Float)
   }
 
+-- | GLSLVersion data type
+data GLSLVersion
+  = V450
+  | V120
+  deriving stock (Eq, Show)
+
+mesaOverride :: GLSLVersion -> String
+mesaOverride V450 = "4.50"
+mesaOverride V120 = "1.20"
+
+showVersion :: GLSLVersion -> Text
+showVersion V450 = "450"
+showVersion V120 = "120"
+
+readGLSLVersion :: Text -> Maybe GLSLVersion
+readGLSLVersion "450" = Just V450
+readGLSLVersion "120" = Just V120
+readGLSLVersion _ = Nothing
+
 -- | Init indicates glfw is ready, the shader version Text and the GlobalEnv record.
-data Initialized = Init T.Text GlobalEnv
+data Initialized = Init GLSLVersion GlobalEnv
 
 isPaused :: Initialized -> IO Bool
-isPaused (Init _ env) = readIORef (_envPaused env)
+isPaused (Init _ env) = (== Paused) <$> readIORef (_envStatus env)
 
-withGLFW :: String -> (Initialized -> IO ()) -> IO ()
-withGLFW [] f = withGLFW "210" f
-withGLFW version@(v : vs) f =
+withGLFW :: GLSLVersion -> (Initialized -> IO ()) -> IO ()
+withGLFW version f =
   bracket
     initGLFW
     (const GLFW.terminate)
@@ -76,21 +106,21 @@ withGLFW version@(v : vs) f =
     initGLFW = do
       glv <- lookupEnv "MESA_GL_VERSION_OVERRIDE"
       case glv of
-        Nothing -> setEnv "MESA_GL_VERSION_OVERRIDE" ([v] <> "." <> vs)
+        Nothing -> setEnv "MESA_GL_VERSION_OVERRIDE" (mesaOverride version)
         _ -> return ()
       GLFW.init
     runCallback initialized =
       if initialized
         then do
-          glEnv <- GlobalEnv <$> newIORef False <*> newIORef (0.0, 0.0)
-          f $ Init (T.pack version) glEnv
+          glEnv <- GlobalEnv <$> newIORef Running <*> newIORef (0.0, 0.0)
+          f $ Init version glEnv
         else ioError (userError "GLFW init failed")
 
 -- | Param describe an Uniform variable
 data Param = Param GL.GLint GL.VariableType
   deriving stock (Show)
 
-type Params = M.Map T.Text Param
+type Params = M.Map Text Param
 
 -- | ParamValue describes an Uniform variable value
 data ParamValue
@@ -149,7 +179,7 @@ setEnvHookClick w cb = writeIORef (_envHookClick (_env w)) (Just cb)
 instance Show Window where
   show _ = "Window[]"
 
-getParam :: Window -> T.Text -> Maybe Param
+getParam :: Window -> Text -> Maybe Param
 getParam w n = M.lookup n (getParams w)
 
 writeParam :: Param -> ParamValue -> IO ()
@@ -164,22 +194,22 @@ writeParam (Param _ v) _ = error $ "Unknown param type: " <> show v
 -- loadShader :: GL.ShaderType -> FilePath -> IO GL.Shader
 -- loadShader st filePath = BS.readFile filePath >>= loadShaderBS st
 
-readShader :: FilePath -> IO (T.Text, Maybe String)
+readShader :: FilePath -> IO (Text, Maybe GLSLVersion)
 readShader fp =
   do
     fc <- BS.readFile fp
     let shader = T.lines $ decodeUtf8 fc
     return (T.unlines $ dropVersion shader, checkVersion shader)
   where
-    dropVersion :: [T.Text] -> [T.Text]
+    dropVersion :: [Text] -> [Text]
     dropVersion [] = []
     dropVersion (x : xs)
       | T.isPrefixOf "#version" x = dropVersion xs
       | otherwise = x : dropVersion xs
-    checkVersion :: [T.Text] -> Maybe String
+    checkVersion :: [Text] -> Maybe GLSLVersion
     checkVersion [] = Nothing
     checkVersion (x : xs)
-      | T.isPrefixOf "#version " x = Just $ T.unpack (T.drop (T.length "#version ") x)
+      | T.isPrefixOf "#version " x = readGLSLVersion (T.drop (T.length "#version ") x)
       | otherwise = checkVersion xs
 
 loadShaderBS :: GL.ShaderType -> BS.ByteString -> IO GL.Shader
@@ -235,13 +265,13 @@ setPositions = do
     GL.vertexAttribPointer (GL.AttribLocation 0)
       $= (GL.ToFloat, GL.VertexArrayDescriptor 2 GL.Float 0 ptr)
 
-setupShader :: T.Text -> T.Text -> IO GL.Program
+setupShader :: GLSLVersion -> Text -> IO GL.Program
 setupShader version shader =
   do
     prog <- GL.createProgram
     -- compile
     vert <- loadShaderBS GL.VertexShader (GL.packUtf8 vertSrc)
-    frag <- loadShaderBS GL.FragmentShader (encodeUtf8 (packVersion <> shader))
+    frag <- loadShaderBS GL.FragmentShader (encodeUtf8 (versionStr <> shader))
     -- attrs
     GL.attribLocation prog "position" $= GL.AttribLocation 0
     -- link
@@ -249,11 +279,11 @@ setupShader version shader =
     GL.currentProgram $= Just prog
     return prog
   where
-    packVersion = T.pack "#version " <> version <> T.pack "\n"
+    versionStr = "#version " <> showVersion version <> "\n"
     vertSrc =
       unlines
-        [ T.unpack packVersion,
-          if version == "450"
+        [ T.unpack versionStr,
+          if version == V450
             then "in vec2 position;"
             else "attribute vec2 position;",
           "void main (void) {",
@@ -317,7 +347,7 @@ updatePos w coord newCenter =
 cursorPosCallback :: Window -> GLFW.Window -> Double -> Double -> IO ()
 cursorPosCallback w _ x y = writeIORef posRef (double2Int x, double2Int y)
   where
-    posRef = (_envPos (_env w))
+    posRef = _envPos (_env w)
 
 scrollCallback :: Window -> GLFW.Window -> Double -> Double -> IO ()
 scrollCallback win@(Window _ _ _ (DefaultParams _ _ (Just range) _ _) (Env rangeRef _ _ _ _) _) _ 0.0 direction =
@@ -333,12 +363,12 @@ scrollCallback _ _ _ _ = return ()
 keyCallback :: Window -> GLFW.Window -> GLFW.Key -> Int -> GLFW.KeyState -> GLFW.ModifierKeys -> IO ()
 keyCallback _ w k _ _ _
   | k `elem` [GLFW.Key'Q, GLFW.Key'Escape] = GLFW.setWindowShouldClose w True
-keyCallback w _ GLFW.Key'Space _ GLFW.KeyState'Pressed _ = togglePause (_envPaused (_glEnv w))
+keyCallback w _ GLFW.Key'Space _ GLFW.KeyState'Pressed _ = togglePause (_envStatus (_glEnv w))
   where
     togglePause pauseRef = do
       pauseValue <- readIORef pauseRef
-      writeIORef pauseRef (not pauseValue)
-      print $ "key: " <> ((if pauseValue then "unpaused" else "paused") :: String)
+      writeIORef pauseRef (toggleStatus pauseValue)
+      print $ "key: " <> show pauseValue
 keyCallback _ _ _ _ _ _ = return ()
 
 windowSizeCallback :: Window -> GLFW.Window -> Int -> Int -> IO ()
@@ -347,9 +377,9 @@ windowSizeCallback w _ x y =
     writeIORef sizeRef (x, y)
     updateResolutions w x y
   where
-    sizeRef = (_envSize (_env w))
+    sizeRef = _envSize (_env w)
 
-withWindow :: Initialized -> Int -> Int -> T.Text -> (Window -> IO ()) -> IO ()
+withWindow :: Initialized -> Int -> Int -> Text -> (Window -> IO ()) -> IO ()
 withWindow (Init version glEnv) width height shader f =
   do
     GLFW.setErrorCallback $ Just simpleErrorCallback
@@ -414,7 +444,7 @@ updateResolutions w x y =
   do
     contextCurrent w
     GL.viewport $= (GL.Position 0 0, GL.Size (fromIntegral x) (fromIntegral y))
-    case (_iRes (_defParams w)) of
+    case _iRes (_defParams w) of
       Just v -> writeParam v (ParamFloat3 (fromIntegral x) (fromIntegral y) 0)
       _ -> return ()
 
@@ -446,7 +476,7 @@ getTime =
     t <- GLFW.getTime
     case t of
       Just tv -> return tv
-      Nothing -> print ("Error getting time?" :: T.Text) >> return 0
+      Nothing -> print ("Error getting time?" :: Text) >> return 0
 
 -- | An example main loop
 run :: Int -> IO Bool -> IO ()
