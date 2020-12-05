@@ -44,6 +44,7 @@ import Control.Exception (bracket)
 import Control.Monad (unless, when)
 import qualified Data.ByteString as BS
 import Data.IORef
+import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as M
 import Data.Text (Text)
 import qualified Data.Text as T
@@ -99,28 +100,26 @@ isPaused (Init _ env) = (== Paused) <$> readIORef (_envStatus env)
 withGLFW :: GLSLVersion -> (Initialized -> IO ()) -> IO ()
 withGLFW version f =
   bracket
-    initGLFW
+    (fixMesaEnv >> GLFW.init)
     (const GLFW.terminate)
     runCallback
   where
-    initGLFW = do
+    runCallback True = do
+      glEnv <- GlobalEnv <$> newIORef Running <*> newIORef (0.0, 0.0)
+      f $ Init version glEnv
+    runCallback False = ioError (userError "GLFW init failed")
+
+    fixMesaEnv = do
       glv <- lookupEnv "MESA_GL_VERSION_OVERRIDE"
       case glv of
         Nothing -> setEnv "MESA_GL_VERSION_OVERRIDE" (mesaOverride version)
         _ -> return ()
-      GLFW.init
-    runCallback initialized =
-      if initialized
-        then do
-          glEnv <- GlobalEnv <$> newIORef Running <*> newIORef (0.0, 0.0)
-          f $ Init version glEnv
-        else ioError (userError "GLFW init failed")
 
 -- | Param describe an Uniform variable
 data Param = Param GL.GLint GL.VariableType
   deriving stock (Show)
 
-type Params = M.Map Text Param
+type Params = Map Text Param
 
 -- | ParamValue describes an Uniform variable value
 data ParamValue
@@ -150,7 +149,7 @@ data Window = Window
     _glProgram :: GL.Program,
     _defParams :: DefaultParams,
     _env :: Env,
-    getParams :: Params
+    _params :: Params
   }
 
 setEnvSeed :: Window -> (Float, Float) -> IO Bool
@@ -180,7 +179,7 @@ instance Show Window where
   show _ = "Window[]"
 
 getParam :: Window -> Text -> Maybe Param
-getParam w n = M.lookup n (getParams w)
+getParam w n = M.lookup n (_params w)
 
 writeParam :: Param -> ParamValue -> IO ()
 writeParam (Param pid GL.Float') (ParamFloat val) = GLR.glUniform1f pid val
@@ -212,21 +211,30 @@ readShader fp =
       | T.isPrefixOf "#version " x = readGLSLVersion (T.drop (T.length "#version ") x)
       | otherwise = checkVersion xs
 
-loadShaderBS :: GL.ShaderType -> BS.ByteString -> IO GL.Shader
+loadShaderBS :: GL.ShaderType -> BS.ByteString -> IO (Maybe GL.Shader)
 loadShaderBS st src =
   do
     shader <- GL.createShader st
     GL.shaderSourceBS shader $= src
     GL.compileShader shader
     ok <- GL.get (GL.compileStatus shader)
-    unless ok $ do
-      infoLog <- GL.get (GL.shaderInfoLog shader)
-      putStrLn $ "Compilation failed:" <> show st
-      putStrLn infoLog
-      ioError (userError "shader compilation failed")
-    return shader
+    if ok
+      then return $ Just shader
+      else do
+        infoLog <- GL.get (GL.shaderInfoLog shader)
+        putStrLn $ "Compilation failed: " <> show st
+        putStrLn infoLog
+        return Nothing
 
-linkShaderProgram :: GL.Program -> GL.Shader -> GL.Shader -> IO ()
+data ShaderStatus
+  = Loaded GL.Program
+  | Failed [String]
+
+isLoaded :: ShaderStatus -> Bool
+isLoaded (Loaded _) = True
+isLoaded (Failed _) = False
+
+linkShaderProgram :: GL.Program -> GL.Shader -> GL.Shader -> IO ShaderStatus
 linkShaderProgram prog vs fs =
   do
     GL.attachShader prog vs
@@ -237,15 +245,19 @@ linkShaderProgram prog vs fs =
     unless (null infoLog) $ do
       putStrLn "Link log:"
       putStrLn infoLog
-    unless ok $ do
-      GL.deleteObjectNames [prog]
-      ioError (userError "GLSL linking failed")
-    GL.validateProgram prog
-    status <- GL.get $ GL.validateStatus prog
-    unless status $ do
-      plog <- GL.get $ GL.programInfoLog prog
-      putStrLn plog
-      ioError (userError "GLSL validation failed")
+    case ok of
+      True -> validate
+      False -> return $ Failed ["GLSL linking failed"]
+  where
+    validate = do
+      GL.validateProgram prog
+      status <- GL.get $ GL.validateStatus prog
+      case status of
+        True -> return $ Loaded prog
+        False -> do
+          plog <- GL.get $ GL.programInfoLog prog
+          putStrLn plog
+          return $ Failed ["GLSL validation failed"]
 
 positions :: V.Vector Float
 positions =
@@ -265,20 +277,32 @@ setPositions = do
     GL.vertexAttribPointer (GL.AttribLocation 0)
       $= (GL.ToFloat, GL.VertexArrayDescriptor 2 GL.Float 0 ptr)
 
-setupShader :: GLSLVersion -> Text -> IO GL.Program
+setupShader :: GLSLVersion -> Text -> IO ShaderStatus
 setupShader version shader =
   do
     prog <- GL.createProgram
+    let clean' = clean prog
     -- compile
-    vert <- loadShaderBS GL.VertexShader (GL.packUtf8 vertSrc)
-    frag <- loadShaderBS GL.FragmentShader (encodeUtf8 (versionStr <> shader))
-    -- attrs
-    GL.attribLocation prog "position" $= GL.AttribLocation 0
-    -- link
-    linkShaderProgram prog vert frag
-    GL.currentProgram $= Just prog
-    return prog
+    vert' <- loadShaderBS GL.VertexShader (GL.packUtf8 vertSrc)
+    case vert' of
+      Nothing -> clean' ["vert failed"]
+      Just vert -> do
+        frag' <- loadShaderBS GL.FragmentShader (encodeUtf8 (versionStr <> shader))
+        case frag' of
+          Nothing -> clean' ["frag failed"]
+          Just frag -> do
+            -- attrs
+            GL.attribLocation prog "position" $= GL.AttribLocation 0
+            -- link
+            status <- linkShaderProgram prog vert frag
+            if isLoaded status
+              then GL.currentProgram $= Just prog
+              else GL.deleteObjectNames [prog]
+            return status
   where
+    clean prog msg = do
+      GL.deleteObjectNames [prog]
+      return $ Failed msg
     versionStr = "#version " <> showVersion version <> "\n"
     vertSrc =
       unlines
@@ -392,7 +416,7 @@ withWindow (Init version glEnv) width height shader f =
     runCallback :: Maybe GLFW.Window -> IO ()
     runCallback (Just win) = do
       GLFW.makeContextCurrent (Just win)
-      prog <- setupShader version shader
+      (Loaded prog) <- setupShader version shader
       params <- getUniforms prog
       setPositions
       let defParams =
