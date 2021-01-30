@@ -2,7 +2,7 @@
 // License Creative Commons Attribution-NonCommercial-ShareAlike 3.0 Unported License.
 
 // Original version: https://www.shadertoy.com/view/4df3Rn
-// Adapted to suport custom center and zoom
+// Adapted to suport custom center, zoom and params
 
 #version 300 es
 precision highp float;
@@ -12,14 +12,37 @@ precision highp float;
 uniform vec2 iResolution;
 uniform vec2 center;
 uniform float range;
-const int max_iter = 200;
+
+// dear-scale 200.0 50.0 500.0
+uniform float maxIter;
+
+// dear-scale 2.0 0.1 5.0
+uniform float powZ;
+
 const float bailout = 256.0;
 
 uniform vec2 seed;
 
+// complex.glsl
+// based on https://github.com/rust-num/num-complex/blob/master/src/lib.rs
+// Copyright 2013 The Rust Project Developers. MIT license
+// Ported to GLSL by Andrei Kashcha (github.com/anvaka), available under MIT license as well.
+vec2 c_from_polar(float r, float theta) {
+  return vec2(r * cos(theta), r * sin(theta));
+}
+
+vec2 c_to_polar(vec2 c) {
+  return vec2(length(c), atan(c.y, c.x));
+}
+
+vec2 c_pow(vec2 c, float e) {
+  vec2 p = c_to_polar(c);
+  return c_from_polar(pow(p.x, e), p.y*e);
+}
+
 float mandelbrot(in vec2 p) {
   float l = 0.0;
-  int i;
+  int i, max_iter;
   vec2 z =
 #ifdef JULIA_MODE
     p;
@@ -32,13 +55,14 @@ float mandelbrot(in vec2 p) {
 #else
     p;
 #endif
+  max_iter = int(floor(maxIter));
   for( i=0; i<max_iter; i++) {
-    z = vec2(z.x*z.x - z.y*z.y, 2.0*z.x*z.y) + c;
+    z = c_pow(z, powZ) + c;
     if (dot(z,z) > bailout)
       break;
     l += 1.0;
   }
-  if (i> max_iter)
+  if (i>= max_iter)
     return 0.0;
   return l - log2(log2(dot(z,z))) + 4.0;
 }

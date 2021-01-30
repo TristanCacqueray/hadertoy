@@ -6,9 +6,13 @@
 module Main (main) where
 
 import Control.Exception (bracket, bracket_)
-import Control.Monad (void)
+import Control.Monad (forM_, void)
 import Control.Monad.Managed
+import Data.IORef
+import Data.List (foldl')
 import Data.Maybe
+import Data.Text (Text)
+import qualified Data.Text as Text
 import DearImGui hiding (render)
 import qualified DearImGui
 import DearImGui.GLFW
@@ -19,8 +23,12 @@ import qualified Graphics.UI.GLFW as GLFW
 import Hadertoy
 import System.Environment (getArgs)
 
-withControllerWindow :: (GLFW.Window -> IO ()) -> IO ()
-withControllerWindow f = bracket mkWindow closeWindow runCallback
+--------------------
+-- Params Controller
+--------------------
+withControllerWindow :: [DearParam] -> (Maybe (GLFW.Window, [DearParam]) -> IO ()) -> IO ()
+withControllerWindow [] f = f Nothing
+withControllerWindow params f = bracket mkWindow closeWindow runCallback
   where
     mkWindow :: IO (Maybe GLFW.Window)
     mkWindow = GLFW.createWindow 800 600 "DearController" Nothing Nothing
@@ -40,13 +48,13 @@ withControllerWindow f = bracket mkWindow closeWindow runCallback
         -- Initialize ImGui's OpenGL backend
         _ <- managed_ $ bracket_ openGL2Init openGL2Shutdown
 
-        liftIO $ f win
+        liftIO $ f (Just (win, params))
 
       return ()
     runCallback Nothing = error "GLFW createWindow failed"
 
-renderControllerWindow :: GLFW.Window -> IO ()
-renderControllerWindow win = do
+renderControllerWindow :: GLFW.Window -> [DearParam] -> IO ()
+renderControllerWindow win xs = do
   -- Tell ImGui we're starting a new frame
   GLFW.makeContextCurrent (Just win)
   openGL2NewFrame
@@ -55,13 +63,9 @@ renderControllerWindow win = do
 
   -- Build the GUI
   bracket_ (begin "Hello, ImGui!") end do
-    -- Add a text widget
-    text "Hello, ImGui!"
-
-    -- Add a button widget, and call 'putStrLn' when it's clicked
-    button "Clickety Click" >>= \case
-      False -> return ()
-      True -> putStrLn "Ow!"
+    forM_ xs $ \(DearParam name _ controller) -> do
+      case controller of
+        DearScale r mi ma -> sliderFloat (Text.unpack name) r mi ma
 
   -- Render
   GL.glClear GL.GL_COLOR_BUFFER_BIT
@@ -69,6 +73,63 @@ renderControllerWindow win = do
   openGL2RenderDrawData =<< getDrawData
   GLFW.swapBuffers win
 
+data DearController = DearScale (IORef Float) Float Float
+
+getValue :: DearController -> IO Float
+getValue = \case
+  DearScale ioRef _ _ -> readIORef ioRef
+
+data DearParam = DearParam Text Param DearController
+
+writeParams :: Window -> [DearParam] -> IO ()
+writeParams win params = case params of
+  [] -> pure ()
+  xs -> GLFW.makeContextCurrent (Just (_glWindow win)) >> mapM_ go xs
+  where
+    go :: DearParam -> IO ()
+    go (DearParam _name param controller) = do
+      value <- getValue controller
+      -- print ("Setting " <> show _name <> " to " <> show value)
+      writeParam param (ParamFloat value)
+
+getParamsFromShader :: Window -> Text -> IO [DearParam]
+getParamsFromShader win shader = traverse mkParam (parseParams shader)
+  where
+    mkParam :: (Text, Text) -> IO DearParam
+    mkParam (controller, uniform) = case getParam win uniform of
+      Just param -> case Text.words controller of
+        ["scale", initialValue, minValue, maxValue] -> do
+          let initialValue' = read (Text.unpack initialValue)
+              minValue' = read (Text.unpack minValue)
+              maxValue' = read (Text.unpack maxValue)
+          refValue <- newIORef initialValue'
+          pure $ DearParam uniform param $ DearScale refValue minValue' maxValue'
+        _ -> error ("Unknown dear params " <> show controller)
+      Nothing -> error ("Uniform " <> show uniform <> " is not used")
+
+-- | parseParams
+-- >>> parseParams "// dear-scale 0.5 0.0 0.1\nuniform float toto;"
+-- [("scale 0.5 0.0 0.1","toto")]
+parseParams :: Text -> [(Text, Text)]
+parseParams shader = snd $ foldl' go (Nothing, []) (Text.lines shader)
+  where
+    go :: (Maybe Text, [(Text, Text)]) -> Text -> (Maybe Text, [(Text, Text)])
+    go (prevLine, acc) line = case prevLine of
+      Nothing -> (parseControllerLine line, acc)
+      Just controllerLine -> (Nothing, (controllerLine, parseUniformLine line) : acc)
+    parseControllerLine :: Text -> Maybe Text
+    parseControllerLine line =
+      if Text.isPrefixOf "// dear-" line
+        then Just $ Text.drop (Text.length "// dear-") line
+        else Nothing
+    parseUniformLine :: Text -> Text
+    parseUniformLine line = case Text.words line of
+      ["uniform", _, name] -> Text.reverse $ Text.drop 1 $ Text.reverse name
+      _ -> error $ "Not an uniform: " <> show line
+
+--------------------
+-- Demo
+--------------------
 main :: IO ()
 main =
   do
@@ -78,7 +139,8 @@ main =
     let version = fromMaybe V120 version'
     withGLFW version $ \glfw ->
       withWindow glfw 800 800 shader $ \win -> do
-        withControllerWindow $ \controllerWin -> do
+        params <- getParamsFromShader win shader
+        withControllerWindow params $ \controllerWin -> do
           _ <- setEnvCenter win (-0.745, 0.0)
           withMaybeJulia glfw fn shader win $ \juliaWin -> run fps (update glfw win juliaWin controllerWin)
   where
@@ -100,7 +162,11 @@ main =
       void $ setEnvSeed juliaWin coord
     fps = 25
     update glfw win juliaWin controllerWin = do
-      renderControllerWindow controllerWin
+      case controllerWin of
+        Just (controllerWin', params) -> do
+          renderControllerWindow controllerWin' params
+          writeParams win params
+        Nothing -> pure ()
       paused <- isPaused glfw
       if paused
         then return False
