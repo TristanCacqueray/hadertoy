@@ -4,7 +4,8 @@
 // Original version: https://www.shadertoy.com/view/4df3Rn
 // Adapted to suport custom center and zoom
 
-#version 120
+#version 300 es
+precision highp float;
 // increase this if you have a very fast GPU
 #define AA 1
 

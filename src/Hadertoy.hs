@@ -74,21 +74,25 @@ data GlobalEnv = GlobalEnv
 
 -- | GLSLVersion data type
 data GLSLVersion
-  = V450
-  | V120
-  deriving stock (Eq, Show)
+  = V120
+  | V300ES
+  | V450
+  deriving stock (Eq, Ord, Show)
 
 mesaOverride :: GLSLVersion -> String
 mesaOverride V450 = "4.50"
+mesaOverride V300ES = "3.00"
 mesaOverride V120 = "1.20"
 
 showVersion :: GLSLVersion -> Text
 showVersion V450 = "450"
+showVersion V300ES = "300 es"
 showVersion V120 = "120"
 
 readGLSLVersion :: Text -> Maybe GLSLVersion
 readGLSLVersion "450" = Just V450
 readGLSLVersion "120" = Just V120
+readGLSLVersion "300 es" = Just V300ES
 readGLSLVersion _ = Nothing
 
 -- | Init indicates glfw is ready, the shader version Text and the GlobalEnv record.
@@ -307,7 +311,7 @@ setupShader version shader =
     vertSrc =
       unlines
         [ T.unpack versionStr,
-          if version == V450
+          if version >= V300ES
             then "in vec2 position;"
             else "attribute vec2 position;",
           "void main (void) {",
