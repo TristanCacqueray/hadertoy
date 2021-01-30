@@ -265,9 +265,10 @@ linkShaderProgram prog vs fs =
 
 positions :: V.Vector Float
 positions =
-  V.fromList $
-    concatMap
-      (\(a, b) -> [a, b])
+  V.fromList $ concatMap (\(a, b) -> [a, b]) squarePos
+  where
+    squarePos :: [(Float, Float)]
+    squarePos =
       [ (-1.0, -1.0),
         (-1.0, 1.0),
         (1.0, -1.0),
@@ -390,7 +391,7 @@ scrollCallback _ _ _ _ = return ()
 
 keyCallback :: Window -> GLFW.Window -> GLFW.Key -> Int -> GLFW.KeyState -> GLFW.ModifierKeys -> IO ()
 keyCallback _ w k _ _ _
-  | k `elem` [GLFW.Key'Q, GLFW.Key'Escape] = GLFW.setWindowShouldClose w True
+  | k `elem` stopKeys = GLFW.setWindowShouldClose w True
 keyCallback w _ GLFW.Key'Space _ GLFW.KeyState'Pressed _ = togglePause (_envStatus (_glEnv w))
   where
     togglePause pauseRef = do
@@ -398,6 +399,9 @@ keyCallback w _ GLFW.Key'Space _ GLFW.KeyState'Pressed _ = togglePause (_envStat
       writeIORef pauseRef (toggleStatus pauseValue)
       print $ "key: " <> show pauseValue
 keyCallback _ _ _ _ _ _ = return ()
+
+stopKeys :: [GLFW.Key]
+stopKeys = [GLFW.Key'Q, GLFW.Key'Escape]
 
 windowSizeCallback :: Window -> GLFW.Window -> Int -> Int -> IO ()
 windowSizeCallback w _ x y =
