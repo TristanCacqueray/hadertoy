@@ -371,9 +371,10 @@ updatePos :: Window -> (Float, Float) -> (Float, Float) -> IO ()
 updatePos w coord newCenter =
   do
     update <- setEnvCenter w newCenter
-    if update
-      then print $ "click: " <> show coord <> " -> " <> show newCenter
-      else print $ "click: " <> show coord
+    -- if update
+    --  then print $ "click: " <> show coord <> " -> " <> show newCenter
+    --  else print $ "click: " <> show coord
+    pure ()
 
 cursorPosCallback :: Window -> GLFW.Window -> Double -> Double -> IO ()
 cursorPosCallback w _ x y = writeIORef posRef (double2Int x, double2Int y)
@@ -388,7 +389,7 @@ scrollCallback win@(Window _ _ _ (DefaultParams _ _ (Just range) _ _) (Env range
     writeIORef rangeRef rangeValue
     contextCurrent win
     writeParam range (ParamFloat rangeValue)
-    print $ "scroll: " <> show direction <> " -> " <> show rangeValue
+-- print $ "scroll: " <> show direction <> " -> " <> show rangeValue
 scrollCallback _ _ _ _ = return ()
 
 keyCallback :: Window -> GLFW.Window -> GLFW.Key -> Int -> GLFW.KeyState -> GLFW.ModifierKeys -> IO ()
@@ -533,7 +534,7 @@ run fps game =
         new_tick <-
           if (cur_time - tick_time) > 1
             then do
-              print $ "fps: " <> show (frame - tick_frame)
+              -- print $ "fps: " <> show (frame - tick_frame)
               return (frame, cur_time)
             else return tick
         GLFW.pollEvents
