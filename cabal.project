@@ -1,2 +1,0 @@
--- Checkout https://github.com/haskell-game/dear-imgui.hs/pull/26
-packages: ../../haskell-game/dear-imgui.hs ./

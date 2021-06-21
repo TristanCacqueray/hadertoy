@@ -13,11 +13,11 @@ import Data.List (foldl')
 import Data.Maybe
 import Data.Text (Text)
 import qualified Data.Text as Text
-import DearImGui hiding (render)
+import DearImGui hiding (render, withWindow)
 import qualified DearImGui
 import DearImGui.GLFW
 import DearImGui.GLFW.OpenGL
-import DearImGui.OpenGL
+import DearImGui.OpenGL2
 import qualified Graphics.GL as GL
 import qualified Graphics.UI.GLFW as GLFW
 import Hadertoy
